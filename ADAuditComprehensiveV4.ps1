@@ -2119,15 +2119,6 @@ function Invoke-FineGrainedPasswordPolicySetup {
 function Show-MainMenu {
     Clear-Host
 
-    #
-    # QUISITIVE ASCII ART + "AD AUDIT TOOL"
-    #
-    Write-Host " / __ \      (_)   (_) | (_)" -ForegroundColor Green
-    Write-Host "| |  | |_   _ _ ___ _| |_ ___   _____ " -ForegroundColor Green
-    Write-Host "| |  | | | | | / __| | __| \ \ / / _ \" -ForegroundColor Green
-    Write-Host "| |__| | |_| | \__ \ | |_| |\ V /  __/" -ForegroundColor Green
-    Write-Host " \___\_\\__,_|_|___/_|\__|_| \_/ \___|" -ForegroundColor Green
-
     Write-Host "======================================================" -ForegroundColor Cyan
     Write-Host " Comprehensive AD Audit Script" -ForegroundColor Cyan
     Write-Host "======================================================" -ForegroundColor Cyan
