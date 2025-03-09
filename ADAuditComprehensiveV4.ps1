@@ -255,7 +255,7 @@ function Invoke-ReviewBaseSecurity {
     try {
         $osInfo = Get-WmiObject -Class Win32_OperatingSystem -ErrorAction Stop
     } catch {
-        Write-Both "Failed to retrieve OS information: $_"
+        Write-Both "Failed to retrieve OS information $_"
         Pause
         return
     }
@@ -263,7 +263,7 @@ function Invoke-ReviewBaseSecurity {
     try {
         $domainPolicy = Get-ADDefaultDomainPasswordPolicy -ErrorAction Stop
     } catch {
-        Write-Both "Failed to retrieve domain password policy: $_"
+        Write-Both "Failed to retrieve domain password policy $_"
         $domainPolicy = $null
     }
 
@@ -307,7 +307,7 @@ function Invoke-ReviewBaseSecurity {
 
     $result = [PSCustomObject]@{
         "Operating System"         = "$($osInfo.Caption), SP:$($osInfo.ServicePackMajorVersion).$($osInfo.ServicePackMinorVersion)"
-        "Last Boot "           = $osInfo.LastBootUp
+        "Last Boot "               = $osInfo.LastBootUp
         "Min Password Length"      = if ($domainPolicy) { $domainPolicy.MinPasswordLength } else { "N/A" }
         "Password History Count"   = if ($domainPolicy) { $domainPolicy.PasswordHistoryCount } else { "N/A" }
         "Max Password Age (Days)"  = if ($domainPolicy) { $domainPolicy.MaxPasswordAge.Days } else { "N/A" }
@@ -322,6 +322,8 @@ function Invoke-ReviewBaseSecurity {
     $result | Export-Csv -Path $OutputFile -NoTypeInformation
     Write-Both "Data exported to $OutputFile"
     Pause
+    Show-MainMenu
+    return
 }
 
 function Invoke-DCEventErrorSummary {
@@ -1534,70 +1536,14 @@ function Invoke-LDAPSecurityCheck {
     }
     Pause
 }
-function Configure-MDIEnvironment {
-    <#
-    .SYNOPSIS
-        Presents a menu to run key DefenderForIdentity commands.
 
-    .DESCRIPTION
-        Ensures that the DefenderForIdentity module is installed or updated.
-        Then it displays a menu with options for running:
-            - Get-MDIConfiguration
-            - New-MDIConfigurationReport
-            - New-MDIDSA
-            - Set-MDIConfiguration -Mode Domain -Configuration All -Identity MDIgMSAsvc01 (or user-specified)
-            - Test-MDIConfiguration -Mode Domain -Configuration All
-            - Test-MDIDSA -Identity "MDIgMSAsvc01" (or user-specified) -Detailed
-            - Test-MDISensorApiConnection
-        Lets the user pick from a menu to execute each command, optionally
-        prompting for a service account name.
 
-    .EXAMPLE
-        PS> Configure-MDIEnvironment
-        # Displays the menu and prompts user for input.
-    #>
-
+function Invoke-MDIEnvironment {
     [CmdletBinding()]
     param()
-
-    # 1. Ensure DefenderForIdentity module is installed or updated
-    $moduleName = "DefenderForIdentity"
-
-    Write-Host "Checking if $moduleName module is installed..."
-    $moduleCheck = Get-Module -ListAvailable -Name $moduleName | Select-Object -First 1
-    if (-not $moduleCheck) {
-        Write-Host "Module '$moduleName' not found. Installing..." -ForegroundColor Yellow
-        try {
-            Install-Module -Name $moduleName -Force -ErrorAction Stop
-        }
-        catch {
-            Write-Error "Failed to install $moduleName $_"
-            return
-        }
-    }
-    else {
-        Write-Host "Module '$moduleName' found. Attempting to update to latest version..." -ForegroundColor Yellow
-        try {
-            Update-Module -Name $moduleName -ErrorAction SilentlyContinue
-        } catch {
-            Write-Warning "Could not update $moduleName $_"
-        }
-    }
-
-    # Import the module
-    try {
-        Import-Module $moduleName -ErrorAction Stop
-        Write-Host "Imported module $moduleName successfully." -ForegroundColor Green
-    }
-    catch {
-        Write-Error "Failed to import $moduleName after installation: $_"
-        return
-    }
-
-    Write-Host "`nWelcome to the Microsoft Defender for Identity Configuration Menu." -ForegroundColor Cyan
-
+function Show-MDISubmenu {
     do {
-        Write-Host "`nPlease choose from the following options:" -ForegroundColor Cyan
+        Write-Host "`nPlease choose from the following MDI options:" -ForegroundColor Cyan
         Write-Host "1) Get MDI Configuration"
         Write-Host "2) Generate MDI Configuration Report"
         Write-Host "3) Create New MDI DSA (Default: MDIgMSAsvc01)"
@@ -1605,9 +1551,9 @@ function Configure-MDIEnvironment {
         Write-Host "5) Test MDI Configuration (Domain, All)"
         Write-Host "6) Test MDI DSA (Default: MDIgMSAsvc01) -Detailed"
         Write-Host "7) Test MDI Sensor API Connection"
-        Write-Host "0) Exit"
+        Write-Host "0) Return to previous menu"
 
-        $choice = Read-Host "Enter your selection (0 to exit)"
+        $choice = Read-Host "Enter your selection (0 to return)"
 
         switch ($choice) {
             "1" {
@@ -1617,10 +1563,10 @@ function Configure-MDIEnvironment {
                     if ($conf) {
                         $conf | Format-Table -AutoSize
                     } else {
-                        Write-Host "No MDI configuration found or command returned nothing." -ForegroundColor Red
+                        Write-Host "No MDI configuration found." -ForegroundColor Red
                     }
                 } catch {
-                    Write-Host "Error executing Get-MDIConfiguration: $_" -ForegroundColor Red
+                    Write-Host "Error executing Get-MDIConfiguration $_" -ForegroundColor Red
                 }
             }
             "2" {
@@ -1630,7 +1576,7 @@ function Configure-MDIEnvironment {
                     try {
                         New-Item -ItemType Directory -Path $outputFolder | Out-Null
                     } catch {
-                        Write-Host "Could not create directory '$outputFolder': $_" -ForegroundColor Red
+                        Write-Host "Could not create directory '$outputFolder' $_" -ForegroundColor Red
                         break
                     }
                 }
@@ -1638,7 +1584,7 @@ function Configure-MDIEnvironment {
                     New-MDIConfigurationReport -OutputFolder $outputFolder -HtmlReportName "MDI_Config.html" -JsonReportName "MDI_Config.json"
                     Write-Host "MDI configuration report generated at $outputFolder" -ForegroundColor Green
                 } catch {
-                    Write-Host "Error executing New-MDIConfigurationReport: $_" -ForegroundColor Red
+                    Write-Host "Error executing New-MDIConfigurationReport $_" -ForegroundColor Red
                 }
             }
             "3" {
@@ -1651,7 +1597,7 @@ function Configure-MDIEnvironment {
                     New-MDIDSA -SamAccountName $svcAccount
                     Write-Host "Successfully created MDI DSA '$svcAccount'." -ForegroundColor Green
                 } catch {
-                    Write-Host "Error executing New-MDIDSA: $_" -ForegroundColor Red
+                    Write-Host "Error executing New-MDIDSA $_" -ForegroundColor Red
                 }
             }
             "4" {
@@ -1664,7 +1610,7 @@ function Configure-MDIEnvironment {
                     Set-MDIConfiguration -Mode Domain -Configuration All -Identity $svcAccount
                     Write-Host "MDI Configuration set successfully for '$svcAccount'." -ForegroundColor Green
                 } catch {
-                    Write-Host "Error executing Set-MDIConfiguration: $_" -ForegroundColor Red
+                    Write-Host "Error executing Set-MDIConfiguration $_" -ForegroundColor Red
                 }
             }
             "5" {
@@ -1673,7 +1619,7 @@ function Configure-MDIEnvironment {
                     $testResults = Test-MDIConfiguration -Mode Domain -Configuration All
                     $testResults | Format-Table -AutoSize
                 } catch {
-                    Write-Host "Error executing Test-MDIConfiguration: $_" -ForegroundColor Red
+                    Write-Host "Error executing Test-MDIConfiguration $_" -ForegroundColor Red
                 }
             }
             "6" {
@@ -1686,7 +1632,7 @@ function Configure-MDIEnvironment {
                     $dsaTest = Test-MDIDSA -Identity $svcAccount -Detailed
                     $dsaTest | Format-List
                 } catch {
-                    Write-Host "Error executing Test-MDIDSA: $_" -ForegroundColor Red
+                    Write-Host "Error executing Test-MDIDSA $_" -ForegroundColor Red
                 }
             }
             "7" {
@@ -1695,20 +1641,479 @@ function Configure-MDIEnvironment {
                     $apiResult = Test-MDISensorApiConnection
                     $apiResult | Format-List
                 } catch {
-                    Write-Host "Error executing Test-MDISensorApiConnection: $_" -ForegroundColor Red
+                    Write-Host "Error executing Test-MDISensorApiConnection $_" -ForegroundColor Red
                 }
             }
             "0" {
-                Write-Host "Exiting..." -ForegroundColor Cyan
+                Write-Host "Exiting MDI submenu..." -ForegroundColor Cyan
             }
             default {
                 Write-Host "Invalid choice, please try again." -ForegroundColor Red
             }
         }
     } while ($choice -ne '0')
-      Pause
-      Show-MainMenu
-      return
+}
+    # 1. Ensure DefenderForIdentity module is installed or updated
+    $moduleName = "DefenderForIdentity"
+
+    Write-Host "Checking if $moduleName module is installed..."
+    $moduleCheck = Get-Module -ListAvailable -Name $moduleName | Select-Object -First 1
+    if (-not $moduleCheck) {
+        Write-Host "Module '$moduleName' not found. Installing..." -ForegroundColor Yellow
+        try {
+            Write-Host "Installing DefenderForIdentity Module" -ForegroundColor -Green
+            Install-Module -Name $moduleName -AllowClobber -Force -Verbose
+        }
+        catch {
+            Write-Error "Failed to install $moduleName $_"
+            Pause
+            return
+        }
+    }
+    else {
+        Write-Host "Module '$moduleName' found. Attempting to update to latest version..." -ForegroundColor Yellow
+        try {
+            Update-Module -Name $moduleName -ErrorAction SilentlyContinue
+        } catch {
+            Write-Warning "Could not update $moduleName $_"
+            Pause
+        }
+    }
+
+    # Import the module
+    try {
+        Import-Module $moduleName -ErrorAction Stop
+        Write-Host "Imported module $moduleName successfully." -ForegroundColor Green
+    }
+    catch {
+        Write-Error "Failed to import $moduleName $_"
+        Pause
+        return
+    }
+
+    Write-Host "`nWelcome to the Microsoft Defender for Identity Configuration Menu." -ForegroundColor Cyan
+
+    # Invoke the encapsulated MDI submenu
+    Show-MDISubmenu
+
+    # Optionally, return to a higher-level menu or simply exit
+    #return
+}
+
+
+function Invoke-FineGrainedPasswordPolicyAudit { 
+
+<# 
+.SYNOPSIS Checks all Fine-Grained Password Policies in AD (msDS-PasswordSettings objects) and reports on them. 
+.DESCRIPTION Enumerates each Fine-Grained Password Policy via Get-ADFineGrainedPasswordPolicy, 
+pulling out relevant properties such as precedence, min/max password age, complexity, and which groups/users it applies to. 
+Outputs results to the console and saves them to CSV. 
+
+.NOTES Requires the ActiveDirectory module (RSAT-AD-PowerShell) on the machine running the script. 
+
+#>
+[CmdletBinding()]
+param(
+    [string]$OutputFolder = "C:\ADHealthCheck\FineGrainedPasswordPolicy"
+)
+
+# Create an output directory if needed
+if (-not (Test-Path -Path $OutputFolder)) {
+    New-Item -Path $OutputFolder -ItemType Directory | Out-Null
+}
+
+$outputCsv = Join-Path $OutputFolder "FineGrainedPasswordPolicyReport.csv"
+
+Write-Host "=== Enumerating Fine-Grained Password Policies ===" -ForegroundColor Cyan
+
+try {
+    Import-Module ActiveDirectory -ErrorAction Stop
+} catch {
+if (-not (Get-Command Get-ADFineGrainedPasswordPolicy -ErrorAction SilentlyContinue)) {
+        Write-Both "The Get-ADFineGrainedPasswordPolicy command was not found. Please ensure the ActiveDirectory module is installed and imported."
+        Pause
+        Show-MainMenu
+        return
+}
+    }
+# Retrieve all fine-grained password policies
+$policies = Get-ADFineGrainedPasswordPolicy -Filter *
+
+if (-not $policies) {
+    Write-Host "No Fine-Grained Password Policies found in this domain." -ForegroundColor Yellow
+    return
+}
+
+$report = foreach ($p in $policies) {
+    # “AppliesTo” is a DN list of groups/users. We’ll join them as a string here.
+    $appliesToStr = $p.AppliesTo -join "; "
+
+    # Build a row of data for export
+    [PSCustomObject]@{
+        Name                       = $p.Name
+        Precedence                 = $p.Precedence
+        AppliesTo                  = $appliesToStr
+        MinPasswordLength          = $p.MinPasswordLength
+        MaxPasswordAge_Days        = if ($p.MaxPasswordAge) { $p.MaxPasswordAge.Days } else { $null }
+        LockoutThreshold           = $p.LockoutThreshold
+        LockoutDuration_Minutes    = if ($p.LockoutDuration) { $p.LockoutDuration.TotalMinutes } else { $null }
+        LockoutObservation_Minutes = if ($p.LockoutObservationWindow) { $p.LockoutObservationWindow.TotalMinutes } else { $null }
+        PasswordHistoryCount       = $p.PasswordHistoryCount
+        PasswordComplexityEnabled  = $p.PasswordComplexityEnabled
+        ReversibleEncryptionEnabled= $p.ReversibleEncryptionEnabled
+    }
+}
+
+Write-Host "`n== Fine-Grained Password Policies Summary ==" -ForegroundColor Green
+$report | Format-Table -AutoSize
+
+$report | Export-Csv -Path $outputCsv -NoTypeInformation
+Write-Host "`nReport exported to $outputCsv" -ForegroundColor Yellow
+Pause
+Show-MainMenu
+return
+}
+
+function Invoke-FineGrainedPasswordPolicySetup {
+    <#
+    .SYNOPSIS
+        Creates either a single Fine-Grained Password Policy (1-tier) OR three FGPPs (3-tier) in Active Directory.
+        Additionally, it offers an interactive submenu so users can select the mode and whether to always link Domain Admins.
+    .DESCRIPTION
+        This script can set up:
+          (A) A **single** Fine-Grained Password Policy linked to one security group
+              and optionally also link it to Domain Admins.
+        **OR**
+          (B) A **3-tier** Fine-Grained Password Policy solution, each tier linked
+              to a different security group, plus optionally Domain Admins.
+
+        The script presents a submenu to guide the user, or you can pass parameters directly.
+
+        By default, the 3-tier approach creates:
+          1) HighSecurity_PrivilegedPolicy   (strictest)
+          2) StandardUser_ModeratePolicy     (moderate)
+          3) SpecialOrLowerSecurity_RelaxedPolicy  (most relaxed)
+
+        If you only want one policy, choose Single-Tier from the menu or pass -SingleTier.
+        If you also choose to link Domain Admins (and optionally Enterprise Admins), the script will
+        automatically assign that highest/single policy to those built-in groups.
+
+        Requirements:
+          - Must run under an account with privileges to manage Fine-Grained Password Policies (e.g. Domain Admin)
+          - ActiveDirectory PowerShell module must be installed and imported.
+    .EXAMPLE
+        # 1) Let the script guide you with the submenu:
+        Invoke-FineGrainedPasswordPolicySetup
+
+        # 2) Or specify parameters directly (skips submenu):
+        Invoke-FineGrainedPasswordPolicySetup -SingleTier -AlwaysLinkDomainAdmins
+
+        # 3) Customize policy names:
+        Invoke-FineGrainedPasswordPolicySetup -Tier1PolicyName "VIP_Strict" -Tier2PolicyName "Managers_Moderate" -Tier3PolicyName "AllOtherUsers_Relaxed" -AlwaysLinkDomainAdmins
+    #>
+
+    param(
+        [switch]
+        $SingleTier,
+
+        [switch]
+        $AlwaysLinkDomainAdmins,
+
+        [switch]
+        $AlwaysLinkEnterpriseAdmins,
+
+        [string]$SingleTierPolicyName = "SingleTierPolicy",
+
+        [string]$Tier1PolicyName = "HighSecurity_PrivilegedPolicy",
+        [string]$Tier2PolicyName = "StandardUser_ModeratePolicy",
+        [string]$Tier3PolicyName = "SpecialOrLowerSecurity_RelaxedPolicy"
+    )
+
+    # Ensure the Active Directory module is loaded
+    if (-not (Get-Module -ListAvailable -Name ActiveDirectory)) {
+        Write-Warning "Active Directory PowerShell module not found. Please install RSAT-AD-PowerShell and try again."
+        Pause
+        Show-MainMenu
+        return
+    }
+    Import-Module ActiveDirectory -ErrorAction Stop
+     if (-not (Get-Command Get-ADFineGrainedPasswordPolicy -ErrorAction SilentlyContinue)) {
+        Write-Both "The Get-ADFineGrainedPasswordPolicy command was not found. Please ensure the ActiveDirectory module is installed and imported."
+        Pause
+        Show-MainMenu
+        return
+    }
+    # Check if running as a user with Domain Admin or similar privileges
+    $inAdminGroup = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if (-not $inAdminGroup) {
+        Write-Warning "It's recommended to run this under an account with Domain Admin privileges to manage Fine-Grained Password Policies."
+        $continue = Read-Host "Continue anyway? (Y/N)"
+        if ($continue -notmatch '^(Y|y)$') {
+            Write-Host "Aborting."
+            return
+        }
+    }
+
+    # Helper function to Create or Update a Fine-Grained Password Policy
+    function Ensure-PasswordPolicy {
+        param(
+            [string]$PolicyName,
+            [int]$Precedence,
+            [int]$MinPasswordLength,
+            [int]$MaxPasswordAgeDays,
+            [int]$MinPasswordAgeDays,
+            [int]$PasswordHistoryCount,
+            [int]$LockoutThreshold,
+            [int]$LockoutDurationMins,
+            [int]$ObservationWindowMins,
+            [bool]$ComplexityEnabledBool,
+            [bool]$ReversibleEncEnabled
+        )
+        
+        # Check if policy already exists
+        $existingPolicy = Get-ADFineGrainedPasswordPolicy -Filter "Name -eq '$PolicyName'" -ErrorAction SilentlyContinue
+
+        if ($null -eq $existingPolicy) {
+            Write-Host "Creating new Fine-Grained Password Policy: $PolicyName" -ForegroundColor Cyan
+            try {
+                New-ADFineGrainedPasswordPolicy `
+                    -Name $PolicyName `
+                    -Precedence $Precedence `
+                    -ComplexityEnabled $ComplexityEnabledBool `
+                    -LockoutThreshold $LockoutThreshold `
+                    -LockoutDuration (New-TimeSpan -Minutes $LockoutDurationMins) `
+                    -LockoutObservationWindow (New-TimeSpan -Minutes $ObservationWindowMins) `
+                    -MaxPasswordAge (New-TimeSpan -Days $MaxPasswordAgeDays) `
+                    -MinPasswordAge (New-TimeSpan -Days $MinPasswordAgeDays) `
+                    -MinPasswordLength $MinPasswordLength `
+                    -PasswordHistoryCount $PasswordHistoryCount `
+                    -ReversibleEncryptionEnabled $ReversibleEncEnabled
+
+                Write-Host "Fine-Grained Password Policy '$PolicyName' created successfully." -ForegroundColor Green
+            }
+            catch {
+                Write-Error "Failed to create policy '$PolicyName': $_"
+            }
+        }
+        else {
+            Write-Host "Policy '$PolicyName' already exists. Updating its settings..." -ForegroundColor Cyan
+            try {
+                Set-ADFineGrainedPasswordPolicy `
+                    -Identity $PolicyName `
+                    -Precedence $Precedence `
+                    -ComplexityEnabled $ComplexityEnabledBool `
+                    -LockoutThreshold $LockoutThreshold `
+                    -LockoutDuration (New-TimeSpan -Minutes $LockoutDurationMins) `
+                    -LockoutObservationWindow (New-TimeSpan -Minutes $ObservationWindowMins) `
+                    -MaxPasswordAge (New-TimeSpan -Days $MaxPasswordAgeDays) `
+                    -MinPasswordAge (New-TimeSpan -Days $MinPasswordAgeDays) `
+                    -MinPasswordLength $MinPasswordLength `
+                    -PasswordHistoryCount $PasswordHistoryCount `
+                    -ReversibleEncryptionEnabled $ReversibleEncEnabled
+
+                Write-Host "Fine-Grained Password Policy '$PolicyName' updated successfully." -ForegroundColor Green
+            }
+            catch {
+                Write-Error "Failed to update policy '$PolicyName': $_"
+            }
+        }
+    }
+
+    # Helper function to link a policy to a group
+    function Link-PolicyToGroup {
+        param(
+            [string]$PolicyName,
+            [string]$GroupName
+        )
+        if ([string]::IsNullOrWhiteSpace($GroupName)) {
+            return
+        }
+        # Attempt to retrieve the group object
+        try {
+            $groupObj = Get-ADGroup -Identity $GroupName -ErrorAction Stop
+            Add-ADFineGrainedPasswordPolicySubject -Identity $PolicyName -Subjects $groupObj.DistinguishedName
+            Write-Host "Linked policy '$PolicyName' to group '$GroupName'." -ForegroundColor Green
+        } catch {
+            Write-Warning "Could not link policy '$PolicyName' to group '$GroupName': $_"
+        }
+    }
+
+    ################################################################################
+    # Submenu logic - only if NO parameters are passed (and user didn't skip), or we want to always show.
+    ################################################################################
+
+    # Check if the user actually provided any parameter. If they did not, show a submenu.
+    # If they did, we skip the menu and just use the parameter values.
+
+    if ($PSBoundParameters.Count -eq 0) {
+        Write-Host "\n===========================" -ForegroundColor Cyan
+        Write-Host " Fine-Grained Password Policy Setup Menu" -ForegroundColor Cyan
+        Write-Host "===========================\n" -ForegroundColor Cyan
+
+        Write-Host "1) Single-Tier Policy" -ForegroundColor Yellow
+        Write-Host "2) Three-Tier Policies" -ForegroundColor Yellow
+        Write-Host "" # blank line
+        $menuChoice = Read-Host "Choose an option (1 or 2)"
+
+        switch ($menuChoice) {
+            "1" {
+                $SingleTier = $true
+            }
+            "2" {
+                $SingleTier = $false
+            }
+            default {
+                Write-Host "Invalid option. Defaulting to Three-Tier." -ForegroundColor Red
+                $SingleTier = $false
+            }
+        }
+
+        # Ask about Domain Admins linking
+        $daChoice = Read-Host "Would you like to ALWAYS link Domain Admins to the strictest policy? (Y/N)"
+        if ($daChoice -match '^(Y|y)$') {
+            $AlwaysLinkDomainAdmins = $true
+        } else {
+            $AlwaysLinkDomainAdmins = $false
+        }
+
+        # Optional question about Enterprise Admins linking
+        $eaChoice = Read-Host "Would you also like to link Enterprise Admins to the strictest policy? (Y/N)"
+        if ($eaChoice -match '^(Y|y)$') {
+            $AlwaysLinkEnterpriseAdmins = $true
+        } else {
+            $AlwaysLinkEnterpriseAdmins = $false
+        }
+    }
+
+    ################################################################################
+    # End of submenu logic - Now proceed with the actual script based on final parameter values.
+    ################################################################################
+
+    if ($SingleTier) {
+        # SINGLE-TIER LOGIC
+        Write-Host "\nRunning in SINGLE-TIER mode." -ForegroundColor Yellow
+        # Prompt for group name
+        $groupName = Read-Host "Enter the security group name for the single-tier policy"
+        
+        # Define recommended default settings for single-tier
+        $singleSettings = [PSCustomObject]@{
+            Name                        = $SingleTierPolicyName
+            Precedence                  = 10   # You can set any precedence here
+            MinPasswordLength           = 12   # Adjust defaults as desired
+            MaxPasswordAgeDays          = 45
+            MinPasswordAgeDays          = 1
+            PasswordHistoryCount        = 12
+            LockoutThreshold            = 5
+            LockoutDurationMins         = 30
+            ObservationWindowMins       = 30
+            ComplexityEnabledBool       = $true
+            ReversibleEncEnabled        = $false
+        }
+
+        # Create or update the single policy
+        Ensure-PasswordPolicy @singleSettings
+        Link-PolicyToGroup -PolicyName $singleSettings.Name -GroupName $groupName
+
+        # If we want to *always* link Domain Admins or Enterprise Admins to the single policy
+        if ($AlwaysLinkDomainAdmins) {
+            Write-Host "Also linking single-tier policy to built-in Domain Admins group." -ForegroundColor Magenta
+            Link-PolicyToGroup -PolicyName $singleSettings.Name -GroupName "Domain Admins"
+        }
+        if ($AlwaysLinkEnterpriseAdmins) {
+            Write-Host "Also linking single-tier policy to built-in Enterprise Admins group." -ForegroundColor Magenta
+            Link-PolicyToGroup -PolicyName $singleSettings.Name -GroupName "Enterprise Admins"
+        }
+
+        Write-Host "\nSingle-tier Fine-Grained Password Policy setup complete." -ForegroundColor Cyan
+    }
+    else {
+        # THREE-TIER LOGIC
+        Write-Host "\nRunning in THREE-TIER mode." -ForegroundColor Yellow
+        Write-Host "This script will set up 3-tier Fine-Grained Password Policies." -ForegroundColor Cyan
+
+        $tier1Group = Read-Host "Enter the security group name for High-Security/Privileged Tier"
+        $tier2Group = Read-Host "Enter the security group name for Standard-User Tier"
+        $tier3Group = Read-Host "Enter the security group name for Lower-Security or Special Tier"
+
+        # Define recommended default settings for each tier.
+        $tier1Settings = {
+            return [PSCustomObject]@{
+                Name                        = $Tier1PolicyName
+                Precedence                  = 10
+                MinPasswordLength           = 14
+                MaxPasswordAgeDays          = 30
+                MinPasswordAgeDays          = 1
+                PasswordHistoryCount        = 24
+                LockoutThreshold            = 5
+                LockoutDurationMins         = 30
+                ObservationWindowMins       = 30
+                ComplexityEnabledBool       = $true
+                ReversibleEncEnabled        = $false
+            }
+        }
+
+        $tier2Settings = {
+            return [PSCustomObject]@{
+                Name                        = $Tier2PolicyName
+                Precedence                  = 20
+                MinPasswordLength           = 12
+                MaxPasswordAgeDays          = 45
+                MinPasswordAgeDays          = 1
+                PasswordHistoryCount        = 12
+                LockoutThreshold            = 5
+                LockoutDurationMins         = 30
+                ObservationWindowMins       = 30
+                ComplexityEnabledBool       = $true
+                ReversibleEncEnabled        = $false
+            }
+        }
+
+        $tier3Settings = {
+            return [PSCustomObject]@{
+                Name                        = $Tier3PolicyName
+                Precedence                  = 30
+                MinPasswordLength           = 8
+                MaxPasswordAgeDays          = 60
+                MinPasswordAgeDays          = 1
+                PasswordHistoryCount        = 8
+                LockoutThreshold            = 5
+                LockoutDurationMins         = 30
+                ObservationWindowMins       = 30
+                ComplexityEnabledBool       = $true
+                ReversibleEncEnabled        = $false
+            }
+        }
+
+        # Retrieve recommended defaults for each tier
+        $t1 = & $tier1Settings
+        $t2 = & $tier2Settings
+        $t3 = & $tier3Settings
+
+        # Create or update each tier's policy
+        Ensure-PasswordPolicy @t1
+        Ensure-PasswordPolicy @t2
+        Ensure-PasswordPolicy @t3
+
+        # Link each policy to the specified group
+        Link-PolicyToGroup -PolicyName $t1.Name -GroupName $tier1Group
+        Link-PolicyToGroup -PolicyName $t2.Name -GroupName $tier2Group
+        Link-PolicyToGroup -PolicyName $t3.Name -GroupName $tier3Group
+
+        # Also forcibly link Domain Admins or Enterprise Admins to the TIER1 policy if requested
+        if ($AlwaysLinkDomainAdmins) {
+            Write-Host "Also linking Tier1 policy to built-in Domain Admins group." -ForegroundColor Magenta
+            Link-PolicyToGroup -PolicyName $t1.Name -GroupName "Domain Admins"
+        }
+        if ($AlwaysLinkEnterpriseAdmins) {
+            Write-Host "Also linking Tier1 policy to built-in Enterprise Admins group." -ForegroundColor Magenta
+            Link-PolicyToGroup -PolicyName $t1.Name -GroupName "Enterprise Admins"
+        }
+
+        Write-Host "\nAll 3-tier Fine-Grained Password Policies have been created/updated and linked to the specified groups." -ForegroundColor Cyan
+        Pause
+        Show-MainMenu
+        return
+    }
 }
 
 function Show-MainMenu {
@@ -1728,82 +2133,80 @@ function Show-MainMenu {
     Write-Host "======================================================" -ForegroundColor Cyan
     Write-Host ""
 
-    # -- GPO & Policy Checks (1-6) --
+    # -- GPO & Policy Checks (1-7) --
     Write-Host "==== GPO & Policy Checks ====" -ForegroundColor Green
     Write-Host "  1) Scan GPOs for Unknown (Orphaned) Accounts"            -ForegroundColor Cyan
     Write-Host "  2) Scan GPOs for Password Policies"                      -ForegroundColor Cyan
-    Write-Host "  3) Scan Overlapping GPO Policy Settings Scan"            -ForegroundColor Cyan
-    Write-Host "  4) SYSVOL GPP cpassword Check (from ADAudit)"            -ForegroundColor Cyan
-    Write-Host "  5) Install and Launch GPOZaurr"                          -ForegroundColor Cyan
-    Write-Host "  6) Microsoft Policy Analyzer Setup and Ready"            -ForegroundColor Cyan
-
+    Write-Host "  3) Scan GPOs for FineGrained Password Policies"          -ForegroundColor Cyan
+    Write-Host "  4) Scan Overlapping GPO Policy Settings"                 -ForegroundColor Cyan
+    Write-Host "  5) SYSVOL GPP cpassword Check (from ADAudit)"            -ForegroundColor Cyan
+    Write-Host "  6) Install and Launch GPOZaurr"                          -ForegroundColor Cyan
+    Write-Host "  7) Microsoft Policy Analyzer Setup and Ready"            -ForegroundColor Cyan
     Write-Host ""
 
-    # -- Base Security & DC Health (7-19) --
-    Write-Host "==== Base Security & DC Health ===="                       -ForegroundColor Green
-    Write-Host "  7)  Review Base Security Settings"                       -ForegroundColor Cyan
-    Write-Host "  8)  Summarize DC Event Errors"                           -ForegroundColor Cyan
-    Write-Host "  9)  All DCs DCDiag Tests"                                -ForegroundColor Cyan
-    Write-Host " 10)  AD Forest Health Check"                              -ForegroundColor Cyan
-    Write-Host " 11)  DC Egress (WAN) IPs"                                 -ForegroundColor Cyan
-    Write-Host " 12)  LDAP/LDAPS Connectivity Check"                       -ForegroundColor Cyan
-    Write-Host " 13)  Best Practice DNS vs AD Sites/Subnets Check"         -ForegroundColor Cyan
-    Write-Host " 14)  LAPS Status Check (from ADAudit)"                    -ForegroundColor Cyan
-    Write-Host " 15)  OU Permissions Check (from ADAudit)"                 -ForegroundColor Cyan
-    Write-Host " 16)  SPN (Kerberoast) Check (from ADAudit)"               -ForegroundColor Cyan
-    Write-Host " 17)  AS-REP (DoesNotRequirePreAuth) Check (from ADAudit)" -ForegroundColor Cyan
-    Write-Host " 18)  DC Ownership Check (from ADAudit)"                   -ForegroundColor Cyan
-    Write-Host " 19)  LDAP Security Check (from ADAudit)"                  -ForegroundColor Cyan
-
+    # -- Base Security & DC Health (8-19) --
+    Write-Host "==== Base Security & DC Health ====" -ForegroundColor Green
+    Write-Host "  8)  Review Base Security Settings"                       -ForegroundColor Cyan
+    Write-Host "  9)  Summarize DC Event Errors"                           -ForegroundColor Cyan
+    Write-Host "  10) All DCs DCDiag Tests"                                -ForegroundColor Cyan
+    Write-Host "  11) AD Forest Health Check"                              -ForegroundColor Cyan
+    Write-Host "  12) DC Egress (WAN) IPs"                                 -ForegroundColor Cyan
+    Write-Host "  13) LDAP/LDAPS Connectivity Check"                       -ForegroundColor Cyan
+    Write-Host "  14) Best Practice DNS vs AD Sites/Subnets Check"         -ForegroundColor Cyan
+    Write-Host "  15) LAPS Status Check (from ADAudit)"                    -ForegroundColor Cyan
+    Write-Host "  16) OU Permissions Check (from ADAudit)"                 -ForegroundColor Cyan
+    Write-Host "  17) SPN (Kerberoast) Check (from ADAudit)"               -ForegroundColor Cyan
+    Write-Host "  18) AS-REP (DoesNotRequirePreAuth) Check (from ADAudit)" -ForegroundColor Cyan
+    Write-Host "  19) LDAP Security Check (from ADAudit)"                  -ForegroundColor Cyan
     Write-Host ""
 
     # -- BPA Scans & Discovery (20-23) --
-    Write-Host "==== BPA Scans & Discovery ===="                          -ForegroundColor Yellow
-    Write-Host " 20) DC Discovery Script (Hardware/Software/NIC Info)"    -ForegroundColor Cyan
-    Write-Host " 21) BPA Scan (Local) - AD Roles"                         -ForegroundColor Cyan
-    Write-Host " 22) BPA Scan (Remote) - AD Roles"                        -ForegroundColor Cyan
-    Write-Host " 23) AD Recon Quiet Audit from Member Server orDesktop (Red Team)"  -ForegroundColor Cyan
-
+    Write-Host "==== BPA Scans & Discovery ====" -ForegroundColor Yellow
+    Write-Host "  20) DC Discovery Script (Hardware/Software/NIC Info)"    -ForegroundColor Cyan
+    Write-Host "  21) BPA Scan (Local) - AD Roles"                         -ForegroundColor Cyan
+    Write-Host "  22) BPA Scan (Remote) - AD Roles"                        -ForegroundColor Cyan
+    Write-Host "  23) AD Recon Quiet Audit from Member Server or Desktop (Red Team)"  -ForegroundColor Cyan
     Write-Host ""
 
-    # -- Administration Scripts - These make changes so use carefully. (24-26) --
+    # -- Administration Scripts (24-29) --
     Write-Host "==== AD Maintenance / FSMO / OU Protection ===="          -ForegroundColor Yellow
-    Write-Host " 24) Move FSMO Roles"                                     -ForegroundColor Cyan
-    Write-Host " 25) Protect OUs from Accidental Deletion"                -ForegroundColor Cyan
-    Write-Host " 26) Fix AD Time Settings on Domain Controllers"          -ForegroundColor Cyan
-    Write-Host " 27) Prepare AD for MDI Deployment"                       -ForegroundColor Cyan
+    Write-Host "  24) Move FSMO Roles"                                     -ForegroundColor Cyan
+    Write-Host "  25) Protect OUs from Accidental Deletion"               -ForegroundColor Cyan
+    Write-Host "  26) Fix AD Time Settings on Domain Controllers"          -ForegroundColor Cyan
+    Write-Host "  27) Prepare AD for MDI Deployment"                       -ForegroundColor Cyan
+    Write-Host "  28) Setup Fine Grained Password Policies"                -ForegroundColor Cyan
     Write-Host ""
-    Write-Host " 28) Exit"
+    Write-Host "  29) Exit"
     Write-Host ""
 }
 
 do {
     Show-MainMenu
-    $choice = Read-Host "Enter selection (1-28)"
+    $choice = Read-Host "Enter selection (1-29)"
 
     switch ($choice) {
 
-        # -- GPO & Policy Checks (1-6) --
+        # -- GPO & Policy Checks (1-7) --
         1 { Invoke-ScanGPOsUnknownAccounts }
         2 { Invoke-ScanGPOPasswordPolicies }
-        3 { Invoke-GPOPolicyOverlapScan }
-        4 { Invoke-SYSVOLGPPPasswordCheck }
-        5 { start-gpozaurr }  # ← New function
-        6 { Invoke-GPOBPASetup }  # ← New function
+        3 { Invoke-FineGrainedPasswordPolicyAudit }
+        4 { Invoke-GPOPolicyOverlapScan }
+        5 { Invoke-SYSVOLGPPPasswordCheck }
+        6 { start-gpozaurr }  
+        7 { Invoke-GPOBPASetup }  
 
-        # -- Base Security & DC Health (7-19) --
-        7  { Invoke-ReviewBaseSecurity }
-        8  { Invoke-DCEventErrorSummary }
-        9  { Invoke-AllDCDiagTests }
-        10 { Invoke-ForestHealthCheck }
-        11 { Invoke-GetDCEgressWANIPs }
-        12 { Invoke-LDAPLDAPSCheck }
-        13 { Invoke-BestPracticeDNSSiteSubnetCheck }
-        14 { Invoke-LAPSStatusCheck }
-        15 { Invoke-OUPermsCheck }
-        16 { Invoke-SPNsCheck }
-        17 { Invoke-ASREPCheck }
-        18 { Invoke-DCsOwnershipCheck }
+        # -- Base Security & DC Health (8-19) --
+        8  { Invoke-ReviewBaseSecurity }
+        9  { Invoke-DCEventErrorSummary }
+        10 { Invoke-AllDCDiagTests }
+        11 { Invoke-ForestHealthCheck }
+        12 { Invoke-GetDCEgressWANIPs }
+        13 { Invoke-LDAPLDAPSCheck }
+        14 { Invoke-BestPracticeDNSSiteSubnetCheck }
+        15 { Invoke-LAPSStatusCheck }
+        16 { Invoke-OUPermsCheck }
+        17 { Invoke-SPNsCheck }
+        18 { Invoke-ASREPCheck }
         19 { Invoke-LDAPSecurityCheck }
 
         # -- BPA Scans & Discovery (20-23) --
@@ -1812,13 +2215,14 @@ do {
         22 { Invoke-BPARemoteScan }
         23 { Invoke-QuietAuditRedTeam }
 
-        # -- AD Maintenance / FSMO / OU (24-26) --
+        # -- AD Maintenance / FSMO / OU (24-27) --
         24 { Invoke-MoveFSMORoles }
         25 { Invoke-ProtectOUs }
         26 { Invoke-ADTimeFix }
-        27 { Configure-MDIEnvironment }
+        27 { Invoke-MDIEnvironment }
+        28 { Invoke-FineGrainedPasswordPolicySetup }
 
-        28 {
+        29 {
             Write-Host "Exiting..."
             break
         }
@@ -1828,6 +2232,6 @@ do {
             Pause
         }
     }
-} while ($choice -ne 28)
+} while ($choice -ne 29)
 
 Write-Host "Done, Thank you for using, we enjoy feedback and suggestions please drop us a line." -ForegroundColor Green
