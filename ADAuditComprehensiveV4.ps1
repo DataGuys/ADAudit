@@ -1787,10 +1787,6 @@ function Set-SecureTLSConfig {
     Write-Host "Secure TLS settings have been configured. Please restart the server for changes to take effect." -ForegroundColor Green
 
 }
-Pause
-Show-MainMenu
-return
-}
 # To apply the configuration, run:
 # Set-SecureTLSConfig
 
