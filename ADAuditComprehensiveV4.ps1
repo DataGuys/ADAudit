@@ -1711,6 +1711,90 @@ function Configure-MDIEnvironment {
       return
 }
 
+function Set-SecureTLSConfig {
+    <#
+    .SYNOPSIS
+        Configures Windows Server to use secure TLS settings by adjusting registry values.
+
+    .DESCRIPTION
+        This function sets the .NET Framework to use the system default TLS versions (enabling strong crypto)
+        and configures SCHANNEL settings to enable TLS 1.2 and TLS 1.3 (both client and server) while disabling
+        older protocols (TLS 1.1, TLS 1.0, and SSL 3.0).
+
+    .NOTES
+        - Run this script in an elevated PowerShell session.
+        - A reboot is required for the changes to take effect.
+        - Always back up your registry before making modifications.
+    #>
+
+    # Internal function to update .NET Framework settings
+    function Set-DotNetTls {
+        param(
+            [Parameter(Mandatory = $true)]
+            [string]$RegPath
+        )
+        if (-not (Test-Path $RegPath)) {
+            New-Item $RegPath -Force | Out-Null
+        }
+        New-ItemProperty -Path $RegPath -Name 'SystemDefaultTlsVersions' -Value 1 -PropertyType DWord -Force | Out-Null
+        New-ItemProperty -Path $RegPath -Name 'SchUseStrongCrypto' -Value 1 -PropertyType DWord -Force | Out-Null
+    }
+
+    # Internal function to set SCHANNEL protocol settings
+    function Set-TLSProtocol {
+        param(
+            [Parameter(Mandatory = $true)]
+            [string]$Protocol,      # e.g. "TLS 1.2", "TLS 1.3", "TLS 1.1", "TLS 1.0", "SSL 3.0"
+            [Parameter(Mandatory = $true)]
+            [string]$Type,          # "Server" or "Client"
+            [Parameter(Mandatory = $true)]
+            [int]$Enabled,          # 1 to enable, 0 to disable
+            [Parameter(Mandatory = $true)]
+            [int]$DisabledByDefault # 0 to not disable by default, 1 to disable
+        )
+        $regPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\$Protocol\$Type"
+        if (-not (Test-Path $regPath)) {
+            New-Item -Path $regPath -Force | Out-Null
+        }
+        New-ItemProperty -Path $regPath -Name 'Enabled' -Value $Enabled -PropertyType DWord -Force | Out-Null
+        New-ItemProperty -Path $regPath -Name 'DisabledByDefault' -Value $DisabledByDefault -PropertyType DWord -Force | Out-Null
+    }
+
+    # Configure .NET Framework settings for 64-bit and 32-bit
+    Set-DotNetTls -RegPath 'HKLM:\SOFTWARE\Microsoft\.NETFramework\v4.0.30319'
+    Set-DotNetTls -RegPath 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\.NETFramework\v4.0.30319'
+
+    # Configure SCHANNEL protocols
+
+    # Enable TLS 1.2 for both Server and Client
+    Set-TLSProtocol -Protocol "TLS 1.2" -Type "Server" -Enabled 1 -DisabledByDefault 0
+    Set-TLSProtocol -Protocol "TLS 1.2" -Type "Client" -Enabled 1 -DisabledByDefault 0
+
+    # Enable TLS 1.3 (supported on Windows Server 2022) for both Server and Client
+    Set-TLSProtocol -Protocol "TLS 1.3" -Type "Server" -Enabled 1 -DisabledByDefault 0
+    Set-TLSProtocol -Protocol "TLS 1.3" -Type "Client" -Enabled 1 -DisabledByDefault 0
+
+    # Disable older, insecure protocols
+    Set-TLSProtocol -Protocol "TLS 1.1" -Type "Server" -Enabled 0 -DisabledByDefault 1
+    Set-TLSProtocol -Protocol "TLS 1.1" -Type "Client" -Enabled 0 -DisabledByDefault 1
+
+    Set-TLSProtocol -Protocol "TLS 1.0" -Type "Server" -Enabled 0 -DisabledByDefault 1
+    Set-TLSProtocol -Protocol "TLS 1.0" -Type "Client" -Enabled 0 -DisabledByDefault 1
+
+    Set-TLSProtocol -Protocol "SSL 3.0" -Type "Server" -Enabled 0 -DisabledByDefault 1
+    Set-TLSProtocol -Protocol "SSL 3.0" -Type "Client" -Enabled 0 -DisabledByDefault 1
+
+    Write-Host "Secure TLS settings have been configured. Please restart the server for changes to take effect." -ForegroundColor Green
+
+}
+Pause
+Show-MainMenu
+return
+}
+# To apply the configuration, run:
+# Set-SecureTLSConfig
+
+
 function Show-MainMenu {
     Clear-Host
 
@@ -1763,14 +1847,15 @@ function Show-MainMenu {
     Write-Host " 25) Protect OUs from Accidental Deletion"                -ForegroundColor Cyan
     Write-Host " 26) Fix AD Time Settings on Domain Controllers"          -ForegroundColor Cyan
     Write-Host " 27) Prepare AD for MDI Deployment"                       -ForegroundColor Cyan
+    Write-Host " 28) Set Secure TLS Config Registry Settings"             -ForegroundColor Cyan
     Write-Host ""
-    Write-Host " 28) Exit"
+    Write-Host " 29) Exit"
     Write-Host ""
 }
 
 do {
     Show-MainMenu
-    $choice = Read-Host "Enter selection (1-28)"
+    $choice = Read-Host "Enter selection (1-29)"
 
     switch ($choice) {
 
@@ -1808,8 +1893,9 @@ do {
         25 { Invoke-ProtectOUs }
         26 { Invoke-ADTimeFix }
         27 { Configure-MDIEnvironment }
+        28 { Set-SecureTLSConfig }
 
-        28 {
+        29 {
             Write-Host "Exiting..."
             break
         }
