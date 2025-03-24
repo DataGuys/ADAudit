@@ -3485,9 +3485,9 @@ function Set-SecureTLSConfig {
 function Show-MainMenu {
     Clear-Host
 
-    Write-Host "======================================================" -ForegroundColor Cyan
-    Write-Host " Gregory H. Hall's Comprehensive AD Audit Script" -ForegroundColor Cyan
-    Write-Host "======================================================" -ForegroundColor Cyan
+    Write-Host "======================================================" -ForegroundColor Green
+    Write-Host " Gregory H. Hall's Comprehensive AD Audit Script"       -ForegroundColor Cyan
+    Write-Host "======================================================" -ForegroundColor Green
     Write-Host ""
 
     # -- GPO & Policy Checks (1-6) --
@@ -3520,7 +3520,7 @@ function Show-MainMenu {
     Write-Host ""
 
     # -- BPA Scans & Discovery (20-23) --
-    Write-Host "==== BPA Scans & Discovery ===="                          -ForegroundColor Yellow
+    Write-Host "==== BPA Scans & Discovery ===="                          -ForegroundColor Green
     Write-Host " 20) DC Discovery Script (Hardware/Software/NIC Info)"    -ForegroundColor Cyan
     Write-Host " 21) BPA Scan (Local) - AD Roles"                         -ForegroundColor Cyan
     Write-Host " 22) BPA Scan (Remote) - AD Roles"                        -ForegroundColor Cyan
@@ -3529,7 +3529,7 @@ function Show-MainMenu {
     Write-Host ""
 
     # -- Administration Scripts - These make changes so use carefully. (24-26) --
-    Write-Host "==== AD Maintenance / FSMO / OU Protection ===="          -ForegroundColor Yellow
+    Write-Host "==== AD Maintenance Functions ===="                       -ForegroundColor Yellow
     Write-Host " 24) Move FSMO Roles"                                     -ForegroundColor Cyan
     Write-Host " 25) Protect OUs from Accidental Deletion"                -ForegroundColor Cyan
     Write-Host " 26) Fix AD Time Settings on Domain Controllers"          -ForegroundColor Cyan
