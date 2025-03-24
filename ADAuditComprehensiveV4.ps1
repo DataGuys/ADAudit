@@ -3490,6 +3490,32 @@ function Remove-InternetExplorer {
     Pause
 }
 
+function Install-MicrosoftEdge {
+    <#
+        Downloads and installs Microsoft Edge Enterprise x64
+    #>
+    Write-Header "Installing Microsoft Edge Enterprise"
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
+        $tempDir = "$env:temp\edgeinstall"
+        $downloadPath = "$tempDir\MicrosoftEdgeEnterpriseX64.msi"
+        
+        Write-Both "Creating temporary directory"
+        New-Item -Path $tempDir -ItemType Directory -ErrorAction SilentlyContinue | Out-Null
+        
+        Write-Both "Downloading Microsoft Edge Enterprise installer"
+        Invoke-WebRequest 'http://go.microsoft.com/fwlink/?LinkID=2093437' -OutFile $downloadPath
+        
+        Write-Both "Installing Microsoft Edge Enterprise silently"
+        Start-Process $downloadPath -ArgumentList "/quiet" -Wait
+        
+        Write-Both "Microsoft Edge installation completed"
+    } catch {
+        Write-Both "Error installing Microsoft Edge: $_"
+    }
+    Pause
+}
+
 function Show-MainMenu {
     Clear-Host
 
@@ -3544,8 +3570,9 @@ function Show-MainMenu {
     Write-Host " 27) Prepare AD for MDI Deployment"                       -ForegroundColor Cyan
     Write-Host " 28) Set Secure TLS Config Registry Settings"             -ForegroundColor Cyan
     Write-Host " 29) Remove Internet Explorer IE Local Machine"           -ForegroundColor Cyan
+    Write-Host " 30) Install Edge Enterprise x64 Local Machine"           -ForegroundColor Cyan
     Write-Host ""
-    Write-Host " 30) Exit" -ForegroundColor Magenta
+    Write-Host " 31) Exit" -ForegroundColor Magenta
     Write-Host ""
 }
 
@@ -3591,8 +3618,9 @@ do {
         27 { Configure-MDIEnvironment }
         28 { Set-SecureTLSConfig }
         29 { Remove-InternetExplorer }
+        30 { Install-MicrosoftEdge  }
 
-        30 {
+        31 {
             Write-Host "Exiting..." -ForegroundColor Green
             break
         }
@@ -3602,6 +3630,6 @@ do {
             Pause
         }
     }
-} while ($choice -ne 30)
+} while ($choice -ne 31)
 
 Write-Host "Done, Thank you for using, we enjoy feedback and suggestions please drop us a line." -ForegroundColor Green
