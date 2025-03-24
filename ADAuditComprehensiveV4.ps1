@@ -3462,32 +3462,82 @@ function Set-SecureTLSConfig {
     Write-Host "Secure TLS settings have been configured. Please restart the server for changes to take effect." -ForegroundColor Green
 
 }
+{
+      Pause
+      Show-MainMenu
+      return
+}
 
 function Remove-InternetExplorer {
-    <#
-        Removes Internet Explorer based on the server OS version
-        Uses different methods for Server 2016 vs Server 2012 R2
-    #>
-    Write-Header "Removing Internet Explorer"
+    [CmdletBinding()]
+    param (
+        [switch]$Force
+    )
+    
+    Write-Host "=========================================" -ForegroundColor Yellow
+    Write-Host " Removing Internet Explorer " -ForegroundColor Yellow
+    Write-Host "=========================================" -ForegroundColor Yellow
+    
+    # Detect OS version
+    $osInfo = Get-WmiObject -Class Win32_OperatingSystem
+    $osCaption = $osInfo.Caption
+    Write-Host "Detected OS: $osCaption"
+    
+    # Handle different OS versions
+    $ieRemoved = $false
+    
     try {
-        $serverOS = (Get-WmiObject -Class Win32_OperatingSystem).Caption
-        Write-Both "Detected OS: $serverOS"
-        
-        if ($serverOS -like "*2016*") {
-            Write-Both "Using DISM to remove IE on Windows Server 2016"
-            DISM /Online /Disable-Feature /FeatureName:Internet-Explorer-Optional-amd64
-        } elseif ($serverOS -like "*2012 R2*") {
-            Write-Both "Using PowerShell to remove IE on Windows Server 2012 R2"
-            Uninstall-WindowsFeature -Name Web-IE-Optional-Feature
-        } else {
-            Write-Both "Unsupported OS version for IE removal: $serverOS"
+        if ($osCaption -like "*Windows Server 2012*") {
+            Write-Host "Removing IE on Windows Server 2012 R2..." -ForegroundColor Cyan
+            Uninstall-WindowsFeature -Name Web-Browser -ErrorAction Stop
+            $ieRemoved = $true
         }
-        
-        Write-Both "Internet Explorer removal process completed."
-    } catch {
-        Write-Both "Error removing Internet Explorer: $_"
+        elseif ($osCaption -like "*Windows Server 2016*" -or $osCaption -like "*Windows Server 2019*") {
+            Write-Host "Removing IE on Windows Server 2016/2019..." -ForegroundColor Cyan
+            Disable-WindowsOptionalFeature -Online -FeatureName Internet-Explorer-Optional-amd64 -NoRestart -ErrorAction Stop
+            $ieRemoved = $true
+        }
+        elseif ($osCaption -like "*Windows Server 2022*") {
+            Write-Host "On Windows Server 2022, Internet Explorer is disabled by default." -ForegroundColor Cyan
+            Write-Host "No action needed." -ForegroundColor Green
+            $ieRemoved = $true
+        }
+        else {
+            Write-Host "Unsupported OS version for IE removal: $osCaption" -ForegroundColor Red
+        }
+    }
+    catch {
+        Write-Host "Error during removal: $_" -ForegroundColor Red
+    }
+    
+    # Check if restart is needed
+    $restartNeeded = $false
+    if ($ieRemoved) {
+        if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending") {
+            $restartNeeded = $true
+        }
+    }
+    
+    Write-Host "Internet Explorer removal process completed." -ForegroundColor Green
+    
+    # Handle restart if needed
+    if ($restartNeeded) {
+        if ($Force) {
+            Write-Host "Restart required. Restarting now..." -ForegroundColor Yellow
+            Restart-Computer -Force
+        } else {
+            Write-Host "Restart required to complete the process." -ForegroundColor Yellow
+            $choice = Read-Host "Would you like to restart now? (Y/N)"
+            if ($choice -eq 'Y' -or $choice -eq 'y') {
+                Restart-Computer -Force
+            } else {
+                Write-Host "Please restart manually to complete the process." -ForegroundColor Yellow
+            }
+        }
     }
     Pause
+    Show-MainMenu
+    return $ieRemoved
 }
 
 function Install-MicrosoftEdge {
@@ -3512,8 +3562,10 @@ function Install-MicrosoftEdge {
         Write-Both "Microsoft Edge installation completed"
     } catch {
         Write-Both "Error installing Microsoft Edge: $_"
-    }
-    Pause
+}
+      Pause
+      Show-MainMenu
+      return
 }
 
 function Deploy-EdgeAndRemoveIE {
@@ -3610,7 +3662,10 @@ function Deploy-EdgeAndRemoveIE {
     
     return $results
 }
-    Pause
+{
+      Pause
+      Show-MainMenu
+      return
 }
 
 function Remove-SMB1Feature {
@@ -3631,6 +3686,11 @@ function Remove-SMB1Feature {
     }
     
     return $result
+}
+{
+      Pause
+      Show-MainMenu
+      return
 }
 
 
