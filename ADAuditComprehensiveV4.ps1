@@ -3613,6 +3613,27 @@ function Deploy-EdgeAndRemoveIE {
     Pause
 }
 
+function Remove-SMB1Feature {
+    [CmdletBinding()]
+    param ()
+    
+    # Uninstall the SMB1 feature
+    $result = Uninstall-WindowsFeature FS-SMB1
+    
+    # Check if a reboot is needed
+    if ($result.RestartNeeded) {
+        $rebootChoice = Read-Host "A system restart is required to complete the removal. Restart now? (Y/N)"
+        if ($rebootChoice -eq 'Y' -or $rebootChoice -eq 'y') {
+            Restart-Computer -Force
+        } else {
+            Write-Host "Please restart the computer manually to complete the removal."
+        }
+    }
+    
+    return $result
+}
+
+
 function Show-MainMenu {
     Clear-Host
 
@@ -3669,8 +3690,9 @@ function Show-MainMenu {
     Write-Host " 29) Remove Internet Explorer IE Local Machine"           -ForegroundColor Cyan
     Write-Host " 30) Install Edge Enterprise x64 Local Machine"           -ForegroundColor Cyan
     Write-Host " 31) Sweep Internet Explorer from all Windows Servers and Install Edge Enterprise x64"  -ForegroundColor Cyan
+    Write-Host " 32) Remove SMB1 from Local Machine"                      -ForegroundColor Cyan
     Write-Host ""
-    Write-Host " 32) Exit" -ForegroundColor Magenta
+    Write-Host " 33) Exit" -ForegroundColor Magenta
     Write-Host ""
 }
 
@@ -3718,8 +3740,9 @@ do {
         29 { Remove-InternetExplorer }
         30 { Install-MicrosoftEdge  }
         31 { Deploy-EdgeAndRemoveIE }
+        32 { Remove-SMB1Feature }
 
-        32 {
+        33 {
             Write-Host "Exiting..." -ForegroundColor Green
             break
         }
@@ -3729,6 +3752,6 @@ do {
             Pause
         }
     }
-} while ($choice -ne 32)
+} while ($choice -ne 33)
 
 Write-Host "Done, Thank you for using, we enjoy feedback and suggestions please drop us a line." -ForegroundColor Green
