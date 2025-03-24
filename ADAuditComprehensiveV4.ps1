@@ -3396,7 +3396,7 @@ GRANT EXECUTE TO [$fullAccountName];
     Write-Host "2. Verify sensor installation status in Microsoft Defender XDR portal." -ForegroundColor Yellow
     Write-Host "3. Configure any additional servers in your Entra Connect environment." -ForegroundColor Yellow
 }
-    } while ($choice -ne '0')
+{
       Pause
       Show-MainMenu
       return
