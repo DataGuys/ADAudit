@@ -3462,9 +3462,33 @@ function Set-SecureTLSConfig {
     Write-Host "Secure TLS settings have been configured. Please restart the server for changes to take effect." -ForegroundColor Green
 
 }
-# To apply the configuration, run:
-# Set-SecureTLSConfig
 
+function Remove-InternetExplorer {
+    <#
+        Removes Internet Explorer based on the server OS version
+        Uses different methods for Server 2016 vs Server 2012 R2
+    #>
+    Write-Header "Removing Internet Explorer"
+    try {
+        $serverOS = (Get-WmiObject -Class Win32_OperatingSystem).Caption
+        Write-Both "Detected OS: $serverOS"
+        
+        if ($serverOS -like "*2016*") {
+            Write-Both "Using DISM to remove IE on Windows Server 2016"
+            DISM /Online /Disable-Feature /FeatureName:Internet-Explorer-Optional-amd64
+        } elseif ($serverOS -like "*2012 R2*") {
+            Write-Both "Using PowerShell to remove IE on Windows Server 2012 R2"
+            Uninstall-WindowsFeature -Name Web-IE-Optional-Feature
+        } else {
+            Write-Both "Unsupported OS version for IE removal: $serverOS"
+        }
+        
+        Write-Both "Internet Explorer removal process completed."
+    } catch {
+        Write-Both "Error removing Internet Explorer: $_"
+    }
+    Pause
+}
 
 function Show-MainMenu {
     Clear-Host
@@ -3519,8 +3543,9 @@ function Show-MainMenu {
     Write-Host " 26) Fix AD Time Settings on Domain Controllers"          -ForegroundColor Cyan
     Write-Host " 27) Prepare AD for MDI Deployment"                       -ForegroundColor Cyan
     Write-Host " 28) Set Secure TLS Config Registry Settings"             -ForegroundColor Cyan
+    Write-Host " 29) Remove Internet Explorer IE Local Machine"           -ForegroundColor Cyan
     Write-Host ""
-    Write-Host " 29) Exit" -ForegroundColor Magenta
+    Write-Host " 30) Exit" -ForegroundColor Magenta
     Write-Host ""
 }
 
@@ -3565,8 +3590,9 @@ do {
         26 { Invoke-ADTimeFix }
         27 { Configure-MDIEnvironment }
         28 { Set-SecureTLSConfig }
+        29 { Remove-InternetExplorer }
 
-        29 {
+        30 {
             Write-Host "Exiting..." -ForegroundColor Green
             break
         }
@@ -3576,6 +3602,6 @@ do {
             Pause
         }
     }
-} while ($choice -ne 29)
+} while ($choice -ne 30)
 
 Write-Host "Done, Thank you for using, we enjoy feedback and suggestions please drop us a line." -ForegroundColor Green
