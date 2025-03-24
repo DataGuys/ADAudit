@@ -830,48 +830,32 @@ function Invoke-BestPracticeDNSSiteSubnetCheck {
 }
 
 function Invoke-ADTimeFix {
-    <#
-        Updates time settings on the PDC emulator and configures other domain controllers
-        to sync with it (from original script).
-    #>
     Write-Header "AD Time Fix Process"
     try {
-        $fsmo = netdom query fsmo | Out-String
-        $pdcLine = $fsmo.Split("`r`n") | Where-Object { $_ -match "^PDC\s" }
-        if (-not $pdcLine) {
-            Write-Both "PDC role not found in FSMO query output."
-            Pause
-            return
-        }
-        $tokens = $pdcLine -split "\s+"
-        $pdcName = $tokens[1]
+        # Simplify PDC lookup using Active Directory module
+        Import-Module ActiveDirectory
+        $pdcName = (Get-ADDomain).PDCEmulator.Split('.')[0]
         Write-Both "PDC Emulator: $pdcName"
-
+        
         $localComp = $env:COMPUTERNAME
         if ($localComp -ieq $pdcName) {
             Write-Both "Running locally on PDC, applying time config here."
             w32tm /config /syncfromflags:manual
-            w32tm /config /manualpeerlist:"0.pool.ntp.org,1.pool.ntp.org,2.pool.ntp.org,3.pool.ntp.org"
+            w32tm /config /manualpeerlist:"tick.usnogps.navy.mil,tock.usnogps.navy.mil"
             w32tm /config /reliable:yes
             net stop w32time; net start w32time
         } else {
             Write-Both "Remotely configuring PDC time on $pdcName"
             $pdcBlock = {
                 w32tm /config /syncfromflags:manual
-                w32tm /config /manualpeerlist:"0.pool.ntp.org,1.pool.ntp.org,2.pool.ntp.org,3.pool.ntp.org"
+                w32tm /config /manualpeerlist:"tick.usnogps.navy.mil,tock.usnogps.navy.mil"
                 w32tm /config /reliable:yes
                 net stop w32time; net start w32time
             }
             Invoke-Command -ComputerName $pdcName -ScriptBlock $pdcBlock
         }
-        Import-Module ActiveDirectory
-        if (-not (Get-Command Get-ADDomainController -ErrorAction SilentlyContinue)) {
-            Write-Both "The Get-ADDomainController command was not found. Please ensure the ActiveDirectory module is installed."
-            Pause
-            Show-MainMenu
-            return
-        }
-        # Now configure other DCs to sync from domain hierarchy
+        
+        # Configure other DCs to sync from domain hierarchy
         $otherDCs = Get-ADDomainController -Filter * | Where-Object { $_.Name -ine $pdcName }
         foreach ($dc in $otherDCs) {
             Write-Both "Configuring time on $($dc.Name)"
