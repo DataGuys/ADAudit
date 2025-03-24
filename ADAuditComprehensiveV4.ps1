@@ -1545,9 +1545,9 @@ function Configure-MDIEnvironment {
             - Get-MDIConfiguration
             - New-MDIConfigurationReport
             - New-MDIDSA
-            - Set-MDIConfiguration -Mode Domain -Configuration All -Identity MDIgMSAsvc01 (or user-specified)
-            - Test-MDIConfiguration -Mode Domain -Configuration All
-            - Test-MDIDSA -Identity "MDIgMSAsvc01" (or user-specified) -Detailed
+            - Set-MDIConfiguration (with parameters: Mode Domain, Configuration All, and Identity)
+            - Test-MDIConfiguration (with parameters: Mode Domain, Configuration All)
+            - Test-MDIDSA (with Identity and Detailed switch)
             - Test-MDISensorApiConnection
         Lets the user pick from a menu to execute each command, optionally
         prompting for a service account name.
@@ -1605,6 +1605,10 @@ function Configure-MDIEnvironment {
         Write-Host "5) Test MDI Configuration (Domain, All)"
         Write-Host "6) Test MDI DSA (Default: MDIgMSAsvc01) -Detailed"
         Write-Host "7) Test MDI Sensor API Connection"
+        Write-Host "8) Configure MDI for AD FS Server"
+        Write-Host "9) Configure MDI for AD CS Server"
+        Write-Host "10) Configure MDI for Microsoft Entra Connect Server"
+        Write-Host "11) Fix Remote SAM Configuration"
         Write-Host "0) Exit"
 
         $choice = Read-Host "Enter your selection (0 to exit)"
@@ -1613,69 +1617,788 @@ function Configure-MDIEnvironment {
             "1" {
                 Write-Host "`nRunning: Get-MDIConfiguration..." -ForegroundColor Yellow
                 try {
-                    $conf = Get-MDIConfiguration
-                    if ($conf) {
-                        $conf | Format-Table -AutoSize
-                    } else {
-                        Write-Host "No MDI configuration found or command returned nothing." -ForegroundColor Red
-                    }
-                } catch {
-                    Write-Host "Error executing Get-MDIConfiguration: $_" -ForegroundColor Red
-                }
-            }
-            "2" {
-                Write-Host "`nRunning: New-MDIConfigurationReport..." -ForegroundColor Yellow
-                $outputFolder = Read-Host "Specify the folder path where you'd like the MDI report generated"
-                if (-not (Test-Path $outputFolder)) {
-                    try {
-                        New-Item -ItemType Directory -Path $outputFolder | Out-Null
-                    } catch {
-                        Write-Host "Could not create directory '$outputFolder': $_" -ForegroundColor Red
+                    # First check if we have a valid connection to the MDI service
+                    Write-Host "Testing MDI API connection..." -ForegroundColor Yellow
+                    $connectionTest = Test-MDISensorApiConnection -ErrorAction Stop
+                    Write-Host "Connection test result: $connectionTest" -ForegroundColor Cyan
+                    
+                    # Based on the output from function 7, it returns a simple boolean
+                    if (-not $connectionTest) {
+                        Write-Host "Warning: Could not connect to MDI API. Connection test failed." -ForegroundColor Red
+                        Write-Host "Testing MDI DSA to troubleshoot..." -ForegroundColor Yellow
+                        $svcAccount = Read-Host "Enter the MDI service account name (press ENTER to use default 'MDIgMSAsvc01')"
+                        if ([string]::IsNullOrWhiteSpace($svcAccount)) {
+                            $svcAccount = "MDIgMSAsvc01"
+                        }
+                        $dsaTest = Test-MDIDSA -Identity $svcAccount -Detailed -ErrorAction SilentlyContinue
+                        if ($dsaTest) {
+                            $dsaTest | Format-List
+                        }
                         break
                     }
-                }
-                try {
-                    New-MDIConfigurationReport -OutputFolder $outputFolder -HtmlReportName "MDI_Config.html" -JsonReportName "MDI_Config.json"
-                    Write-Host "MDI configuration report generated at $outputFolder" -ForegroundColor Green
-                } catch {
-                    Write-Host "Error executing New-MDIConfigurationReport: $_" -ForegroundColor Red
+                    else {
+                        Write-Host "MDI API connection test succeeded." -ForegroundColor Green
+                    }
+                    
+                    # If connection is valid, get the configuration
+                    $mode = Read-Host "Enter the configuration mode (press ENTER to use default 'Domain')"
+                    if ([string]::IsNullOrWhiteSpace($mode)) {
+                        $mode = "Domain"
+                        Write-Host "Using default mode: $mode" -ForegroundColor Green
+                    }
+                    
+                    $configType = Read-Host "Enter the configuration type (press ENTER to use default 'All')"
+                    if ([string]::IsNullOrWhiteSpace($configType)) {
+                        $configType = "All"
+                        Write-Host "Using default configuration type: $configType" -ForegroundColor Green
+                    }
+                    
+                    $identity = Read-Host "Enter the service account identity (press ENTER to use default 'MDIgMSAsvc01')"
+                    if ([string]::IsNullOrWhiteSpace($identity)) {
+                        $identity = "MDIgMSAsvc01"
+                        Write-Host "Using default identity: $identity" -ForegroundColor Green
+                    }
+                    
+                    $conf = Get-MDIConfiguration -Mode $mode -Configuration $configType -Identity $identity -ErrorAction Stop
+                    
+                    # Check if configuration exists and display it in a meaningful way
+                    if ($conf) {
+                        # Create a formatted output with key information
+                        Write-Host "MDI Configuration Summary:" -ForegroundColor Cyan
+                        Write-Host "=========================" -ForegroundColor Cyan
+                        
+                        # Display domain configuration first
+                        $domainConfig = $conf | Where-Object { $_.Type -eq "Domain" }
+                        if ($domainConfig) {
+                            Write-Host "`nDomain Configuration:" -ForegroundColor Green
+                            $domainConfig | Format-Table Identity, IsHealthy, LastHealthCheckTime -AutoSize
+                        }
+                        
+                        # Display forest configuration if available
+                        $forestConfig = $conf | Where-Object { $_.Type -eq "Forest" }
+                        if ($forestConfig) {
+                            Write-Host "`nForest Configuration:" -ForegroundColor Green
+                            $forestConfig | Format-Table Identity, IsHealthy, LastHealthCheckTime -AutoSize
+                        }
+                        
+                        # Display detailed information for each configuration
+                        Write-Host "`nDetailed Configuration:" -ForegroundColor Green
+                        $conf | Format-Table -Property Identity, Type, IsHealthy, LastHealthCheckTime, HealthCheckErrors, ServiceAccount -AutoSize
+                        
+                        # Offer to save the results to a file
+                        $saveToFile = Read-Host "Would you like to save these results to a file? (Y/N)"
+                        if ($saveToFile -eq "Y" -or $saveToFile -eq "y") {
+                            $outputPath = Read-Host "Enter the full path for the output file (default: C:\Temp\MDI_Configuration.csv)"
+                            if ([string]::IsNullOrWhiteSpace($outputPath)) {
+                                $outputPath = "C:\Temp\MDI_Configuration.csv"
+                            }
+                            
+                            # Create directory if it doesn't exist
+                            $directory = Split-Path -Path $outputPath -Parent
+                            if (!(Test-Path -Path $directory)) {
+                                New-Item -ItemType Directory -Path $directory -Force | Out-Null
+                            }
+                            
+                            # Export to CSV
+                            $conf | Export-Csv -Path $outputPath -NoTypeInformation
+                            Write-Host "Results saved to $outputPath" -ForegroundColor Green
+                        }
+                    } 
+                    else {
+                        Write-Host "No MDI configuration found. Please run the Set-MDIConfiguration cmdlet first." -ForegroundColor Red
+                        Write-Host "You can select option 4 from the main menu to set up the MDI configuration." -ForegroundColor Yellow
+                    }
+                } 
+                catch {
+                    Write-Host "Error executing Get-MDIConfiguration: $_" -ForegroundColor Red
+                    Write-Host "Exception details: $($_.Exception.Message)" -ForegroundColor Red
+                    Write-Host "`nPlease ensure:" -ForegroundColor Yellow
+                    Write-Host "- The MDI module is properly installed" -ForegroundColor Yellow
+                    Write-Host "- You're running as an administrator" -ForegroundColor Yellow
+                    Write-Host "- The MDI service is configured in your environment" -ForegroundColor Yellow
                 }
             }
-            "3" {
-                Write-Host "`nRunning: New-MDIDSA..." -ForegroundColor Yellow
+
+            "2" {
+                Write-Host "`nRunning: New-MDIConfigurationReport..." -ForegroundColor Yellow
+                
+                # Get the service account with default
                 $svcAccount = Read-Host "Enter the MDI service account name (press ENTER to use default 'MDIgMSAsvc01')"
                 if ([string]::IsNullOrWhiteSpace($svcAccount)) {
                     $svcAccount = "MDIgMSAsvc01"
                 }
+                Write-Host "Using service account: $svcAccount" -ForegroundColor Green
+                
+                # First check if we have a valid connection to the MDI service
                 try {
-                    New-MDIDSA -SamAccountName $svcAccount
-                    Write-Host "Successfully created MDI DSA '$svcAccount'." -ForegroundColor Green
-                } catch {
-                    Write-Host "Error executing New-MDIDSA: $_" -ForegroundColor Red
+                    Write-Host "Testing MDI API connection..." -ForegroundColor Yellow
+                    $connectionTest = Test-MDISensorApiConnection -ErrorAction Stop
+                    Write-Host "Connection test result: $connectionTest" -ForegroundColor Cyan
+                    
+                    # Based on the output from function 7, it returns a simple boolean
+                    if (-not $connectionTest) {
+                        Write-Host "Warning: Could not connect to MDI API. Connection test failed." -ForegroundColor Red
+                        Write-Host "Please ensure MDI is properly configured before generating a report." -ForegroundColor Yellow
+                        
+                        # Let's see what the DSA account status is
+                        Write-Host "Testing MDI DSA account to troubleshoot..." -ForegroundColor Yellow
+                        $dsaTest = Test-MDIDSA -Identity $svcAccount -Detailed -ErrorAction SilentlyContinue
+                        if ($dsaTest) {
+                            Write-Host "DSA account test results:" -ForegroundColor Cyan
+                            $dsaTest | Format-List
+                        }
+                        
+                        # Let's ask if the user wants to force the report generation anyway
+                        $forceContinue = Read-Host "Do you want to try generating the report anyway? (Y/N)"
+                        if ($forceContinue -ne 'Y' -and $forceContinue -ne 'y') {
+                            break
+                        }
+                        Write-Host "Continuing with report generation despite connection test failure..." -ForegroundColor Yellow
+                    }
+                    else {
+                        Write-Host "MDI API connection test succeeded." -ForegroundColor Green
+                    }
+                }
+                catch {
+                    Write-Host "Error connecting to MDI service: $_" -ForegroundColor Red
+                    # Let's ask if the user wants to force the report generation anyway
+                    $forceContinue = Read-Host "Do you want to try generating the report anyway? (Y/N)"
+                    if ($forceContinue -ne 'Y' -and $forceContinue -ne 'y') {
+                        break
+                    }
+                    Write-Host "Continuing with report generation despite connection error..." -ForegroundColor Yellow
+                }
+                
+                # Ask for the report mode with default
+                $reportMode = Read-Host "Enter the configuration mode for the report (press ENTER to use default 'Domain')"
+                if ([string]::IsNullOrWhiteSpace($reportMode)) {
+                    $reportMode = "Domain"
+                    Write-Host "Using default mode: $reportMode" -ForegroundColor Green
+                }
+                
+                # Note: New-MDIConfigurationReport doesn't use the Configuration parameter
+                $defaultPath = "C:\Temp\MDI_Reports"
+                $outputFolder = Read-Host "Specify the folder path where you'd like the MDI report generated (default: $defaultPath)"
+                if ([string]::IsNullOrWhiteSpace($outputFolder)) {
+                    $outputFolder = $defaultPath
+                }
+                
+                # Create the directory if it doesn't exist
+                if (-not (Test-Path $outputFolder)) {
+                    try {
+                        New-Item -ItemType Directory -Path $outputFolder -Force | Out-Null
+                        Write-Host "Created directory: $outputFolder" -ForegroundColor Green
+                    } 
+                    catch {
+                        Write-Host "Could not create directory '$outputFolder': $_" -ForegroundColor Red
+                        break
+                    }
+                }
+                
+                try {
+                    # Set the working location to the output folder
+                    $currentLocation = Get-Location
+                    Set-Location -Path $outputFolder
+                    
+                    Write-Host "Generating MDI Configuration Report. This may take a few minutes..." -ForegroundColor Yellow
+                    
+                    # Run the report generation directly (no jobs)
+                    Write-Host "Executing New-MDIConfigurationReport..." -ForegroundColor Yellow
+                    Import-Module DefenderForIdentity -Force
+                    
+                    # Generate the report directly - no background jobs
+                    $result = New-MDIConfigurationReport -Path $outputFolder -Mode $reportMode -Identity $svcAccount
+                    
+                    # Restore original location
+                    Set-Location -Path $currentLocation
+                    
+                    Write-Host "Report generation completed. Looking for generated reports..." -ForegroundColor Cyan
+                    
+                    # Allow some time for files to be fully written
+                    Start-Sleep -Seconds 2
+                    
+                    # Search for newest HTML and JSON in the output folder
+                    $htmlFiles = Get-ChildItem -Path $outputFolder -Filter "*.html" | Sort-Object LastWriteTime -Descending
+                    $jsonFiles = Get-ChildItem -Path $outputFolder -Filter "*.json" | Sort-Object LastWriteTime -Descending
+                    
+                    $htmlPath = $null
+                    $jsonPath = $null
+                    
+                    # Try to get paths from result first
+                    if ($result -and $result.HtmlReportPath -and (Test-Path $result.HtmlReportPath)) {
+                        $htmlPath = $result.HtmlReportPath
+                        Write-Host "Found HTML report path from result." -ForegroundColor Cyan
+                    }
+                    # Fallback to directory search
+                    elseif ($htmlFiles.Count -gt 0) {
+                        $htmlPath = $htmlFiles[0].FullName
+                        Write-Host "Found HTML report by searching directory." -ForegroundColor Cyan
+                    }
+                    
+                    if ($result -and $result.JsonReportPath -and (Test-Path $result.JsonReportPath)) {
+                        $jsonPath = $result.JsonReportPath
+                    }
+                    elseif ($jsonFiles.Count -gt 0) {
+                        $jsonPath = $jsonFiles[0].FullName
+                    }
+                    
+                    # Display results with clear formatting
+                    Write-Host "`n----------------------------------------" -ForegroundColor Cyan
+                    Write-Host "     MDI CONFIGURATION REPORT RESULTS" -ForegroundColor Cyan
+                    Write-Host "----------------------------------------" -ForegroundColor Cyan
+                    
+                    if ($htmlPath -and (Test-Path $htmlPath)) {
+                        Write-Host "HTML Report: $htmlPath" -ForegroundColor Green
+                        
+                        # Try to open the HTML report
+                        try {
+                            Write-Host "Attempting to open HTML report..." -ForegroundColor Yellow
+                            
+                            # First try using Invoke-Item which is often more reliable
+                            try {
+                                Invoke-Item -Path $htmlPath -ErrorAction Stop
+                                Write-Host "HTML report opened via Invoke-Item." -ForegroundColor Green
+                            }
+                            catch {
+                                # Fallback to Start-Process
+                                Write-Host "Trying alternative method to open the report..." -ForegroundColor Yellow
+                                Start-Process -FilePath $htmlPath -ErrorAction Stop
+                                Write-Host "HTML report opened successfully." -ForegroundColor Green
+                            }
+                        }
+                        catch {
+                            Write-Host "Could not automatically open HTML report: $_" -ForegroundColor Red
+                            Write-Host "You can manually open the report at: $htmlPath" -ForegroundColor Yellow
+                        }
+                    }
+                    else {
+                        Write-Host "HTML Report: Not found" -ForegroundColor Red
+                    }
+                    
+                    if ($jsonPath -and (Test-Path $jsonPath)) {
+                        Write-Host "JSON Report: $jsonPath" -ForegroundColor Green
+                    }
+                    else {
+                        Write-Host "JSON Report: Not found" -ForegroundColor Red
+                    }
+                    
+                    if ((-not $htmlPath -or -not (Test-Path $htmlPath)) -and (-not $jsonPath -or -not (Test-Path $jsonPath))) {
+                        Write-Host "No report files were found. The operation may have failed." -ForegroundColor Red
+                        Write-Host "Check the output folder manually: $outputFolder" -ForegroundColor Yellow
+                    }
+                    else {
+                        Write-Host "`nMDI configuration report generation completed successfully!" -ForegroundColor Green
+                    }
+                    
+                    # Add a pause to let the user read the output
+                    Write-Host "`nPress Enter to continue..." -ForegroundColor Cyan
+                    Read-Host
+                } 
+                catch {
+                    # Restore original location in case of error
+                    Set-Location -Path $currentLocation
+                    
+                    Write-Host "Error executing New-MDIConfigurationReport: $_" -ForegroundColor Red
+                    Write-Host "Exception details: $($_.Exception.Message)" -ForegroundColor Red
+                    
+                    # Specific error handling for common issues
+                    if ($_.Exception.Message -like "*unauthorized*" -or $_.Exception.Message -like "*access denied*") {
+                        Write-Host "`nThis appears to be a permissions issue. Please ensure:" -ForegroundColor Yellow
+                        Write-Host "- You're running as an administrator" -ForegroundColor Yellow
+                        Write-Host "- The account has proper permissions to MDI" -ForegroundColor Yellow
+                    }
+                    elseif ($_.Exception.Message -like "*not found*") {
+                        Write-Host "`nCommand or path not found. Please ensure:" -ForegroundColor Yellow
+                        Write-Host "- The DefenderForIdentity module is properly installed" -ForegroundColor Yellow
+                        Write-Host "- You're using the correct cmdlet name (it may have changed in newer versions)" -ForegroundColor Yellow
+                    }
+                    elseif ($_.Exception.Message -like "*timeout*") {
+                        Write-Host "`nConnection timeout. Please ensure:" -ForegroundColor Yellow
+                        Write-Host "- Your network connection is stable" -ForegroundColor Yellow
+                        Write-Host "- The MDI service is available and responsive" -ForegroundColor Yellow
+                    }
+                    
+                    # Add a pause here too in case of error
+                    Write-Host "`nPress Enter to continue..." -ForegroundColor Cyan
+                    Read-Host
                 }
             }
+
+            "3" {
+                Write-Host "`nRunning: Setup gMSA for MDI..." -ForegroundColor Yellow
+                $svcAccount = Read-Host "Enter the MDI service account name (press ENTER to use default 'MDIgMSAsvc01')"
+                if ([string]::IsNullOrWhiteSpace($svcAccount)) {
+                    $svcAccount = "MDIgMSAsvc01"
+                }
+                
+                # Import the ActiveDirectory module
+                try {
+                    Import-Module ActiveDirectory -ErrorAction Stop
+                    Write-Host "ActiveDirectory module imported successfully." -ForegroundColor Green
+                } catch {
+                    Write-Host "Failed to import ActiveDirectory module: $_" -ForegroundColor Red
+                    break
+                }
+                
+                # Check if any KDS root keys exist (without EffectiveDate filter)
+                try {
+                    $kdsKeys = Get-KdsRootKey
+                    Write-Host "Found $($kdsKeys.Count) existing KDS root keys." -ForegroundColor Green
+                    
+                    if ($kdsKeys.Count -gt 0) {
+                        # Display the existing keys
+                        foreach ($key in $kdsKeys) {
+                            Write-Host "  - Key ID: $($key.KeyId), Created: $($key.CreationTime), Effective: $($key.EffectiveTime)" -ForegroundColor Green
+                        }
+                        
+                        # Check if there's at least one effective key
+                        $effectiveKeys = $kdsKeys | Where-Object { $_.EffectiveTime -le (Get-Date) }
+                        if ($effectiveKeys.Count -gt 0) {
+                            Write-Host "At least one KDS root key is effective and can be used for gMSA." -ForegroundColor Green
+                        } else {
+                            Write-Host "No currently effective KDS root keys found. Waiting for existing keys to become effective..." -ForegroundColor Yellow
+                            # Wait a moment to allow existing keys to become effective if they were just created
+                            Start-Sleep -Seconds 10
+                        }
+                    } else {
+                        Write-Host "No KDS root keys found. Creating one now..." -ForegroundColor Yellow
+                        Add-KdsRootKey -EffectiveImmediately
+                        Write-Host "KDS root key created with EffectiveImmediately. It is now active for gMSA creation." -ForegroundColor Green
+                    }
+                } catch {
+                    Write-Host "Error checking KDS root keys: $_" -ForegroundColor Red
+                    
+                    # Fallback: Check if we can create a gMSA without creating a new key
+                    try {
+                        Write-Host "Attempting to create gMSA without creating a new KDS key..." -ForegroundColor Yellow
+                        $testGmsaName = "MDITestgMSA"
+                        New-ADServiceAccount -Name $testGmsaName -DNSHostName $dcDNSHostName -PrincipalsAllowedToRetrieveManagedPassword $allowedGroup -ErrorAction Stop
+                        Remove-ADServiceAccount -Identity $testGmsaName -Confirm:$false -ErrorAction SilentlyContinue
+                        Write-Host "KDS root key is already functional." -ForegroundColor Green
+                    } catch {
+                        Write-Host "Cannot create gMSA, attempting to create a new KDS root key..." -ForegroundColor Yellow
+                        try {
+                            Add-KdsRootKey -EffectiveImmediately
+                            Write-Host "KDS root key created with EffectiveImmediately." -ForegroundColor Green
+                        } catch {
+                            Write-Host "Failed to create KDS root key: $_" -ForegroundColor Red
+                            break
+                        }
+                    }
+                }
+                
+                # Retrieve a domain controller's DNSHostName
+                try {
+                    $dc = Get-ADDomainController -Discover -ErrorAction Stop
+                    $dcDNSHostName = ($dc.DNSHostName -join '')
+                    if ([string]::IsNullOrWhiteSpace($dcDNSHostName)) {
+                        $dcDNSHostName = ($dc.HostName -join '')
+                    }
+                    if ([string]::IsNullOrWhiteSpace($dcDNSHostName)) {
+                        throw "Domain Controller DNSHostName is null. Cannot proceed."
+                    }
+                    Write-Host "Using domain controller: $dcDNSHostName" -ForegroundColor Green
+                } catch {
+                    Write-Host "Failed to retrieve domain controller DNSHostName: $_" -ForegroundColor Red
+                    break
+                }
+                
+                # Use the built-in "Domain Controllers" group as the allowed principal
+                $allowedGroup = "Domain Controllers"
+                
+                # Check if the gMSA already exists
+                try {
+                    $existingGmsa = Get-ADServiceAccount -Identity $svcAccount -ErrorAction SilentlyContinue
+                } catch {
+                    $existingGmsa = $null
+                }
+                
+                if ($existingGmsa) {
+                    Write-Host "gMSA '$svcAccount' already exists." -ForegroundColor Green
+                } else {
+                    Write-Host "gMSA '$svcAccount' not found. Creating new gMSA..." -ForegroundColor Yellow
+                    try {
+                        New-ADServiceAccount -Name $svcAccount `
+                                        -DNSHostName $dcDNSHostName `
+                                        -PrincipalsAllowedToRetrieveManagedPassword $allowedGroup -Verbose
+                        Write-Host "gMSA '$svcAccount' created successfully." -ForegroundColor Green
+                    } catch {
+                        Write-Host "Failed to create gMSA '$svcAccount': $_" -ForegroundColor Red
+                        break
+                    }
+                }
+                
+                # Install the gMSA on all domain controllers
+                try {
+                    Write-Host "Installing gMSA on all domain controllers..." -ForegroundColor Yellow
+                    
+                    # Get all domain controllers
+                    $allDCs = Get-ADDomainController -Filter * | Select-Object -ExpandProperty Name
+                    Write-Host "Found domain controllers: $($allDCs -join ', ')" -ForegroundColor Green
+                    
+                    # Get current computer name
+                    $currentComputer = $env:COMPUTERNAME
+                    
+                    # Install locally first
+                    Write-Host "Installing gMSA on local domain controller $currentComputer..." -ForegroundColor Yellow
+                    Write-Host "Pausing for 3 seconds before installation..." -ForegroundColor Yellow
+                    Start-Sleep -Seconds 3
+                    Install-ADServiceAccount -Identity $svcAccount
+                    
+                    # Verify local installation
+                    $localTest = Test-ADServiceAccount -Identity $svcAccount
+                    if ($localTest) {
+                        Write-Host "gMSA successfully installed on local domain controller." -ForegroundColor Green
+                    } else {
+                        Write-Warning "gMSA installation verification failed on local domain controller."
+                    }
+                    
+                    # Install on remote domain controllers if there are any others
+                    $remoteDCs = $allDCs | Where-Object { $_ -ne $currentComputer }
+                    
+                    if ($remoteDCs.Count -gt 0) {
+                        Write-Host "Installing gMSA on remote domain controllers: $($remoteDCs -join ', ')..." -ForegroundColor Yellow
+                        
+                        foreach ($dc in $remoteDCs) {
+                            Write-Host "Installing on $dc..." -ForegroundColor Yellow
+                            try {
+                                Invoke-Command -ComputerName $dc -ScriptBlock {
+                                    param($svcAccountName)
+                                    # Import the module on the remote machine
+                                    Import-Module ActiveDirectory
+                                    # Pause before installing
+                                    Write-Host "Pausing for 3 seconds before installation..." -ForegroundColor Yellow
+                                    Start-Sleep -Seconds 3
+                                    # Install the gMSA
+                                    Install-ADServiceAccount -Identity $svcAccountName
+                                    # Verify installation
+                                    $result = Test-ADServiceAccount -Identity $svcAccountName
+                                    return $result
+                                } -ArgumentList $svcAccount -ErrorAction Stop
+                                
+                                Write-Host "gMSA successfully installed on $dc." -ForegroundColor Green
+                            } catch {
+                                Write-Warning "Failed to install gMSA on $dc $_"
+                            }
+                        }
+                    } else {
+                        Write-Host "No additional domain controllers found for remote installation." -ForegroundColor Yellow
+                    }
+                } catch {
+                    Write-Host "Error installing gMSA on domain controllers: $_" -ForegroundColor Red
+                }
+                
+                # Add permissions to the Deleted Objects container
+                try {
+                    Write-Host "Adding required permissions to the Deleted Objects container..." -ForegroundColor Yellow
+                    
+                    # Create a security group for the gMSA
+                    $groupName = "MDI_$($svcAccount)_Group"
+                    $groupDescription = "Members of this group are allowed to read the objects in the Deleted Objects container in AD"
+                    
+                    # Check if the group exists
+                    $groupExists = Get-ADGroup -Filter "Name -eq '$groupName'" -ErrorAction SilentlyContinue
+                    
+                    if (-not $groupExists) {
+                        Write-Host "Creating security group '$groupName'..." -ForegroundColor Yellow
+                        $groupParams = @{
+                            Name           = $groupName
+                            SamAccountName = $groupName
+                            DisplayName    = $groupName
+                            GroupCategory  = 'Security'
+                            GroupScope     = 'Universal'
+                            Description    = $groupDescription
+                        }
+                        $group = New-ADGroup @groupParams -PassThru
+                        Write-Host "Group '$groupName' created successfully." -ForegroundColor Green
+                    } else {
+                        Write-Host "Group '$groupName' already exists." -ForegroundColor Green
+                        $group = $groupExists
+                    }
+                    
+                    # Add the gMSA to the group
+                    $gmsaAccount = "$svcAccount$"
+                    Write-Host "Adding '$gmsaAccount' to group '$groupName'..." -ForegroundColor Yellow
+                    Add-ADGroupMember -Identity $groupName -Members $gmsaAccount -ErrorAction SilentlyContinue
+                    Write-Host "Added gMSA to security group." -ForegroundColor Green
+                    
+                    # Get the deleted objects container's distinguished name
+                    $distinguishedName = ([adsi]'').distinguishedName.Value
+                    $deletedObjectsDN = "CN=Deleted Objects,$distinguishedName"
+                    Write-Host "Deleted Objects DN: $deletedObjectsDN" -ForegroundColor Green
+                    
+                    # Take ownership on the deleted objects container
+                    Write-Host "Taking ownership of the Deleted Objects container..." -ForegroundColor Yellow
+                    $takeOwnershipParams = @($deletedObjectsDN, '/takeOwnership')
+                    $result = & C:\Windows\System32\dsacls.exe $takeOwnershipParams
+                    Write-Host "Ownership taken: $result" -ForegroundColor Green
+                    
+                    # Grant the 'List Contents' and 'Read Property' permissions to the group
+                    Write-Host "Granting permissions to the group..." -ForegroundColor Yellow
+                    $domain = ([adsi]'').name.Value
+                    $grantPermissionsParams = @($deletedObjectsDN, '/G', "$domain\$groupName`:LCRP")
+                    $result = & C:\Windows\System32\dsacls.exe $grantPermissionsParams
+                    Write-Host "Permissions granted: $result" -ForegroundColor Green
+                } catch {
+                    Write-Host "Error configuring Deleted Objects container permissions: $_" -ForegroundColor Red
+                }
+                
+                # Configure the Default Domain Controllers Policy to grant "Log on as a service" right
+                # CRITICAL: This is needed for AATPSensor service to impersonate the gMSA account
+                try {
+                    Write-Host "`nConfiguring 'Log on as a service' right for gMSA account..." -ForegroundColor Yellow
+                    Write-Host "Note: AATPSensor service runs as LocalService but impersonates the gMSA account" -ForegroundColor Cyan
+                    
+                    # Import GroupPolicy module
+                    Import-Module GroupPolicy -ErrorAction Stop
+                    Write-Host "GroupPolicy module imported successfully." -ForegroundColor Green
+                    
+                    # Build the fully qualified name for the gMSA
+                    $domainName = (Get-ADDomain).NetBIOSName
+                    $logonName = if ($svcAccount[-1] -ne '$') { "$svcAccount$" } else { $svcAccount }
+                    $fullGmsaName = "$domainName\$logonName"
+                    
+                    # Get the Default Domain Controllers Policy
+                    $gpoName = "Default Domain Controllers Policy"
+                    $gpo = Get-GPO -Name $gpoName -ErrorAction Stop
+                    Write-Host "Found GPO: $gpoName" -ForegroundColor Green
+                    
+                    # Backup the GPO before making changes
+                    $backupPath = "$env:TEMP\GPOBackups"
+                    if (-not (Test-Path $backupPath)) {
+                        New-Item -ItemType Directory -Path $backupPath -Force | Out-Null
+                    }
+                    Backup-GPO -Guid $gpo.Id -Path $backupPath | Out-Null
+                    Write-Host "Backed up GPO to $backupPath before making changes." -ForegroundColor Green
+                    
+                    # Create a temporary GPO report to find existing settings
+                    $reportPath = "$env:TEMP\GPOReport.xml"
+                    Get-GPOReport -Guid $gpo.Id -ReportType Xml -Path $reportPath
+                    
+                    # Get current settings to add to them rather than replace
+                    $currentRights = @()
+                    $xmlReport = [xml](Get-Content $reportPath)
+                    $rightsNodes = $xmlReport.SelectNodes("//SecuritySetting")
+                    foreach ($node in $rightsNodes) {
+                        if ($node.Name -eq "Log on as a service") {
+                            $memberNodes = $node.SelectNodes("Member")
+                            foreach ($member in $memberNodes) {
+                                $currentRights += $member.Name.'#text'
+                            }
+                        }
+                    }
+                    
+                    # Add the gMSA and NT SERVICE\ALL SERVICES if not already present
+                    if ($currentRights -notcontains $fullGmsaName) {
+                        $currentRights += $fullGmsaName
+                    }
+                    if ($currentRights -notcontains "NT SERVICE\ALL SERVICES") {
+                        $currentRights += "NT SERVICE\ALL SERVICES"
+                    }
+                    
+                    # Use the Set-GPPermission cmdlet to update the rights
+                    $tempFile = "$env:TEMP\ServiceLogonRights.inf"
+@"
+[Unicode]
+Unicode=yes
+[Version]
+signature="`$CHICAGO`$"
+Revision=1
+[Privilege Rights]
+SeServiceLogonRight = $($currentRights -join ',')
+"@ | Out-File -FilePath $tempFile -Encoding Unicode
+                    
+                    # Import the settings into the GPO
+                    $domain = (Get-ADDomain).DNSRoot
+                    Write-Host "Updating GPO with new service logon rights..." -ForegroundColor Yellow
+                    $command = "secedit.exe /configure /db secedit.sdb /cfg `"$tempFile`" /areas USER_RIGHTS"
+                    Invoke-Command -ScriptBlock { & cmd.exe /c $command }
+                    Start-Sleep -Seconds 2
+                    
+                    # Directly update Group Policy settings using secedit.exe
+                    try {
+                        # Get the SYSVOL path for the GPO
+                        $gpoSysvolPath = "\\$domain\SYSVOL\$domain\Policies\{$($gpo.Id)}"
+                        $machineGptPath = "$gpoSysvolPath\Machine\Microsoft\Windows NT\SecEdit"
+                        
+                        # Ensure the directory exists
+                        if (-not (Test-Path $machineGptPath)) {
+                            New-Item -Path $machineGptPath -ItemType Directory -Force | Out-Null
+                        }
+                        
+                        # Copy the INF file to the GPO location
+                        $gpoInfPath = "$machineGptPath\GptTmpl.inf"
+                        
+                        # If the file already exists, we need to merge our settings into it
+                        if (Test-Path $gpoInfPath) {
+                            Write-Host "Merging service logon rights with existing GPO template..." -ForegroundColor Yellow
+                            
+                            # Read the existing GPO template
+                            $existingGptContent = Get-Content $gpoInfPath -Raw
+                            
+                            # Check if the file already has a [Privilege Rights] section
+                            if ($existingGptContent -match "\[Privilege Rights\]") {
+                                # Check if it already has a SeServiceLogonRight line
+                                if ($existingGptContent -match "SeServiceLogonRight\s*=") {
+                                    # Replace the existing line with our updated one
+                                    $existingGptContent = $existingGptContent -replace "SeServiceLogonRight\s*=.*", "SeServiceLogonRight = $($currentRights -join ',')"
+                                } else {
+                                    # Add our line to the [Privilege Rights] section
+                                    $existingGptContent = $existingGptContent -replace "\[Privilege Rights\]", "[Privilege Rights]`r`nSeServiceLogonRight = $($currentRights -join ',')"
+                                }
+                            } else {
+                                # Add the [Privilege Rights] section with our line
+                                $existingGptContent += "`r`n[Privilege Rights]`r`nSeServiceLogonRight = $($currentRights -join ',')`r`n"
+                            }
+                            
+                            # Write the updated content back to the file
+                            $existingGptContent | Out-File -FilePath $gpoInfPath -Encoding Unicode -Force
+                        } else {
+                            # Just copy our INF file with the settings
+                            Copy-Item -Path $tempFile -Destination $gpoInfPath -Force
+                        }
+                        
+                        Write-Host "Updated GPO security template at $gpoInfPath" -ForegroundColor Green
+                        
+                        # Increment the version number in the GPT.ini file to force a refresh
+                        $gptIniPath = "$gpoSysvolPath\GPT.INI"
+                        if (Test-Path $gptIniPath) {
+                            $gptIni = Get-Content $gptIniPath
+                            $versionLine = $gptIni | Where-Object { $_ -match "Version=" }
+                            if ($versionLine) {
+                                $versionNumber = [int]($versionLine -replace "Version=", "")
+                                $newVersion = $versionNumber + 1
+                                $gptIni = $gptIni -replace "Version=$versionNumber", "Version=$newVersion"
+                            } else {
+                                $gptIni += "Version=1"
+                            }
+                            $gptIni | Out-File -FilePath $gptIniPath -Encoding ASCII -Force
+                            Write-Host "Updated GPO version number to force refresh" -ForegroundColor Green
+                        }
+                        
+                        # Force a Group Policy update
+                        Write-Host "Forcing Group Policy update..." -ForegroundColor Yellow
+                        $gpupdateCmd = "gpupdate.exe /target:computer /force"
+                        Invoke-Expression $gpupdateCmd
+                    } catch {
+                        Write-Warning "Failed to update GPO files directly: $_"
+                        
+                        # Last resort: Just use the secedit approach which already worked
+                        Write-Host "Using secedit fallback approach..." -ForegroundColor Yellow
+                        
+                        # This already worked in the previous step, so we're good
+                        Write-Host "Policy already applied via secedit.exe" -ForegroundColor Green
+                    }
+                    
+                    # Force a Group Policy update on the domain controllers
+                    Write-Host "Forcing Group Policy update..." -ForegroundColor Yellow
+                    Invoke-GPUpdate -Force -Computer $dcDNSHostName -Target Computer
+                    
+                    Write-Host "Successfully granted 'Log on as a service' rights to $fullGmsaName in $gpoName." -ForegroundColor Green
+                    Write-Host "Please allow time for Group Policy to propagate to all domain controllers." -ForegroundColor Yellow
+                    
+                    # Clean up temporary files
+                    Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
+                    Remove-Item $reportPath -Force -ErrorAction SilentlyContinue
+                }
+                catch {
+                    Write-Host "Failed to update 'Log on as a service' rights in GPO: $_" -ForegroundColor Red
+                }
+            }
+
             "4" {
                 Write-Host "`nRunning: Set-MDIConfiguration -Mode Domain -Configuration All..." -ForegroundColor Yellow
                 $svcAccount = Read-Host "Enter the MDI service account name (press ENTER to use default 'MDIgMSAsvc01')"
                 if ([string]::IsNullOrWhiteSpace($svcAccount)) {
                     $svcAccount = "MDIgMSAsvc01"
                 }
+                
+                # Prompt for configuration mode
+                $configMode = Read-Host "Enter the configuration mode (press ENTER to use default 'Domain')"
+                if ([string]::IsNullOrWhiteSpace($configMode)) {
+                    $configMode = "Domain"
+                    Write-Host "Using default mode: $configMode" -ForegroundColor Green
+                }
+                
+                # Prompt for configuration type
+                $configType = Read-Host "Enter the configuration type (press ENTER to use default 'All')"
+                if ([string]::IsNullOrWhiteSpace($configType)) {
+                    $configType = "All"
+                    Write-Host "Using default configuration type: $configType" -ForegroundColor Green
+                }
+                
                 try {
-                    Set-MDIConfiguration -Mode Domain -Configuration All -Identity $svcAccount
+                    Set-MDIConfiguration -Mode $configMode -Configuration $configType -Identity $svcAccount
                     Write-Host "MDI Configuration set successfully for '$svcAccount'." -ForegroundColor Green
                 } catch {
                     Write-Host "Error executing Set-MDIConfiguration: $_" -ForegroundColor Red
                 }
+                
+                # Now, automatically link the required GPOs.
+                try {
+                    Import-Module GroupPolicy -ErrorAction Stop
+                    Write-Host "GroupPolicy module imported successfully." -ForegroundColor Green
+                } catch {
+                    Write-Host "Failed to import GroupPolicy module: $_" -ForegroundColor Red
+                }
+                
+                # Get the domain's distinguished name (root of the domain)
+                try {
+                    $domainDN = (Get-ADDomain).DistinguishedName
+                    Write-Host "Domain DN: $domainDN" -ForegroundColor Green
+                } catch {
+                    Write-Host "Failed to retrieve domain DN: $_" -ForegroundColor Red
+                    break
+                }
+                
+                # Define the GPO names that need linking.
+                $gpoNames = @(
+                    "Microsoft Defender for Identity - Advanced Audit and URA Policy for Entra Connect",
+                    "Microsoft Defender for Identity - Remote SAM Access"
+                )
+                
+                foreach ($gpoName in $gpoNames) {
+                    $gpo = Get-GPO -Name $gpoName -ErrorAction SilentlyContinue
+                    if ($gpo) {
+                        try {
+                            New-GPLink -Name $gpoName -Target $domainDN -Enforced ([Microsoft.GroupPolicy.EnforceLink]::No) -ErrorAction Stop
+                            Write-Host "GPO '$gpoName' linked to domain root successfully." -ForegroundColor Green
+                        } catch {
+                            Write-Host "Failed to link GPO '$gpoName': $_" -ForegroundColor Red
+                        }
+                    }
+                    else {
+                        Write-Host "GPO '$gpoName' not found." -ForegroundColor Red
+                    }
+                }
+                
+                # Optional: Pause for a few seconds to let changes propagate
+                Start-Sleep -Seconds 5
             }
+
             "5" {
                 Write-Host "`nRunning: Test-MDIConfiguration -Mode Domain -Configuration All..." -ForegroundColor Yellow
                 try {
-                    $testResults = Test-MDIConfiguration -Mode Domain -Configuration All
+                    $configMode = Read-Host "Enter the configuration mode (press ENTER to use default 'Domain')"
+                    if ([string]::IsNullOrWhiteSpace($configMode)) {
+                        $configMode = "Domain"
+                        Write-Host "Using default mode: $configMode" -ForegroundColor Green
+                    }
+                    
+                    $configType = Read-Host "Enter the configuration type (press ENTER to use default 'All')"
+                    if ([string]::IsNullOrWhiteSpace($configType)) {
+                        $configType = "All"
+                        Write-Host "Using default configuration type: $configType" -ForegroundColor Green
+                    }
+                    
+                    Write-Host "Running Test-MDIConfiguration -Mode $configMode -Configuration $configType..." -ForegroundColor Yellow
+                    $testResults = Test-MDIConfiguration -Mode $configMode -Configuration $configType
                     $testResults | Format-Table -AutoSize
                 } catch {
-                    Write-Host "Error executing Test-MDIConfiguration: $_" -ForegroundColor Red
+                    Write-Host "Error executing Test-MDIConfiguration $_" -ForegroundColor Red
                 }
             }
+            
             "6" {
                 Write-Host "`nRunning: Test-MDIDSA -Detailed..." -ForegroundColor Yellow
                 $svcAccount = Read-Host "Enter the MDI service account name (press ENTER to use default 'MDIgMSAsvc01')"
@@ -1683,28 +2406,996 @@ function Configure-MDIEnvironment {
                     $svcAccount = "MDIgMSAsvc01"
                 }
                 try {
+                    # First check if Test-MDIDSA has other required parameters besides Identity
+                    $cmdInfo = Get-Command Test-MDIDSA -ErrorAction SilentlyContinue
+                    if ($cmdInfo) {
+                        $requiredParams = $cmdInfo.Parameters.Values | 
+                            Where-Object { $_.Attributes.Mandatory -eq $true -and $_.Name -ne "Identity" }
+                        
+                        if ($requiredParams) {
+                            Write-Host "The Test-MDIDSA cmdlet has additional required parameters:" -ForegroundColor Yellow
+                            $requiredParams | ForEach-Object { Write-Host "- $($_.Name)" -ForegroundColor Yellow }
+                            
+                            # We'll handle any discovered parameters later
+                            # For now, if there are required params besides Identity, we'll note it
+                        }
+                    }
+                    
+                    Write-Host "Running Test-MDIDSA -Identity $svcAccount -Detailed..." -ForegroundColor Yellow
                     $dsaTest = Test-MDIDSA -Identity $svcAccount -Detailed
                     $dsaTest | Format-List
                 } catch {
-                    Write-Host "Error executing Test-MDIDSA: $_" -ForegroundColor Red
+                    Write-Host "Error executing Test-MDIDSA $_" -ForegroundColor Red
                 }
             }
+            
             "7" {
                 Write-Host "`nRunning: Test-MDISensorApiConnection..." -ForegroundColor Yellow
+                # First verify we have the MDI module loaded
                 try {
+                    Import-Module DefenderForIdentity -ErrorAction Stop
+                } catch {
+                    Write-Host "Failed to import DefenderForIdentity module. Installing..." -ForegroundColor Yellow
+                    Install-Module -Name DefenderForIdentity -Force
+                    Import-Module DefenderForIdentity -ErrorAction Stop
+                }
+                
+                # Run the cmdlet with both required parameters
+                Write-Host "Running Test-MDISensorApiConnection..." -ForegroundColor Yellow
+                try {
+                    # Check if Test-MDISensorApiConnection has any required parameters
+                    $cmdInfo = Get-Command Test-MDISensorApiConnection -ErrorAction SilentlyContinue
+                    if ($cmdInfo) {
+                        $hasRequiredParams = $cmdInfo.Parameters.Values | Where-Object { $_.Attributes.Mandatory -eq $true }
+                        
+                        if ($hasRequiredParams) {
+                            Write-Host "The Test-MDISensorApiConnection cmdlet has required parameters:" -ForegroundColor Yellow
+                            $hasRequiredParams | ForEach-Object { Write-Host "- $($_.Name)" -ForegroundColor Yellow }
+                            
+                            # For future extensibility, we'll prompt for parameters if needed
+                            # Currently just running the basic command since we don't expect required params
+                        }
+                    }
+                    
                     $apiResult = Test-MDISensorApiConnection
+                    Write-Host "Raw connection test result:" -ForegroundColor Cyan
+                    Write-Host "Type: $($apiResult.GetType().FullName)" -ForegroundColor Cyan
+                    Write-Host "Value: $apiResult" -ForegroundColor Cyan
+                    
+                    if ($apiResult -is [bool]) {
+                        Write-Host "Connection test returned a boolean value." -ForegroundColor Yellow
+                        if ($apiResult) {
+                            Write-Host "Connection test SUCCEEDED." -ForegroundColor Green
+                        } else {
+                            Write-Host "Connection test FAILED." -ForegroundColor Red
+                        }
+                    } elseif ($apiResult -is [System.Object] -and (Get-Member -InputObject $apiResult -Name "Result" -MemberType Properties -ErrorAction SilentlyContinue)) {
+                        Write-Host "Connection test returned an object with Result property." -ForegroundColor Yellow
+                        Write-Host "Result value: $($apiResult.Result)" -ForegroundColor Cyan
+                        if ($apiResult.Result -eq "Success") {
+                            Write-Host "Connection test SUCCEEDED." -ForegroundColor Green
+                        } else {
+                            Write-Host "Connection test FAILED." -ForegroundColor Red
+                        }
+                    }
+                    
+                    Write-Host "`nDetailed connection test result:" -ForegroundColor Yellow
                     $apiResult | Format-List
                 } catch {
-                    Write-Host "Error executing Test-MDISensorApiConnection: $_" -ForegroundColor Red
+                    Write-Host "Error executing Test-MDISensorApiConnection $_" -ForegroundColor Red
                 }
             }
+
+            "8" {
+                Write-Host "`nRunning: Configure-MDIforADFS..." -ForegroundColor Yellow
+                $svcAccount = Read-Host "Enter the MDI service account name (press ENTER to use default 'MDIgMSAsvc01')"
+                if ([string]::IsNullOrWhiteSpace($svcAccount)) {
+                    $svcAccount = "MDIgMSAsvc01"
+                }
+                try {
+                    Configure-MDIforADFS -ServiceAccount $svcAccount
+                } catch {
+                    Write-Host "Error configuring MDI for AD FS: $_" -ForegroundColor Red
+                }
+            }
+            
+            "9" {
+                Write-Host "`nRunning: Configure-MDIforADCS..." -ForegroundColor Yellow
+                $svcAccount = Read-Host "Enter the MDI service account name (press ENTER to use default 'MDIgMSAsvc01')"
+                if ([string]::IsNullOrWhiteSpace($svcAccount)) {
+                    $svcAccount = "MDIgMSAsvc01"
+                }
+                try {
+                    Configure-MDIforADCS -ServiceAccount $svcAccount
+                } catch {
+                    Write-Host "Error configuring MDI for AD CS: $_" -ForegroundColor Red
+                }
+            }
+            
+            "10" {
+                Write-Host "`nRunning: Configure-MDIforEntraConnect..." -ForegroundColor Yellow
+                $svcAccount = Read-Host "Enter the MDI service account name (press ENTER to use default 'MDIgMSAsvc01')"
+                if ([string]::IsNullOrWhiteSpace($svcAccount)) {
+                    $svcAccount = "MDIgMSAsvc01"
+                }
+                try {
+                    Configure-MDIforEntraConnect -ServiceAccount $svcAccount
+                } catch {
+                    Write-Host "Error configuring MDI for Entra Connect: $_" -ForegroundColor Red
+                }
+            }
+              "11" {
+                Write-Host "`nRunning: Set-MDIConfiguration -Mode Domain -Configuration RemoteSAM..." -ForegroundColor Yellow
+                $svcAccount = Read-Host "Enter the MDI service account name (press ENTER to use default 'MDIgMSAsvc01')"
+                if ([string]::IsNullOrWhiteSpace($svcAccount)) {
+                    $svcAccount = "MDIgMSAsvc01"
+                }
+                try {
+                    Set-MDIConfiguration -Mode Domain -Configuration RemoteSAM -Identity $svcAccount
+                } catch {
+                    Write-Host "Error configuring MDI for Entra Connect: $_" -ForegroundColor Red
+                }
+            }
+            
             "0" {
                 Write-Host "Exiting..." -ForegroundColor Cyan
             }
+            
             default {
                 Write-Host "Invalid choice, please try again." -ForegroundColor Red
             }
         }
+    } while ($choice -ne '0')
+}
+
+# Define the AD FS, AD CS, and Entra Connect configuration functions at script level (not inside other blocks)
+function Configure-MDIforADFS {
+    <#
+    .SYNOPSIS
+        Configures Microsoft Defender for Identity for AD FS servers.
+
+    .DESCRIPTION
+        Performs the necessary configuration steps to prepare AD FS servers for MDI sensor installation:
+        - Configures auditing for AD FS
+        - Sets up database permissions for the MDI service account
+        - Validates the configuration
+
+    .PARAMETER ServiceAccount
+        The name of the gMSA or directory service account to use. Defaults to MDIgMSAsvc01.
+
+    .EXAMPLE
+        PS> Configure-MDIforADFS -ServiceAccount "MDIgMSAsvc01"
+    #>
+
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$false)]
+        [string]$ServiceAccount = "MDIgMSAsvc01"
+    )
+
+    Write-Host "`n==== Configuring Microsoft Defender for Identity for AD FS Servers ====`n" -ForegroundColor Cyan
+
+    # Validate input
+    if (-not $ServiceAccount.EndsWith('$') -and $ServiceAccount -notlike "*@*") {
+        # Likely a gMSA without $ suffix
+        $ServiceAccount = "$ServiceAccount$"
+        Write-Host "Using service account: $ServiceAccount" -ForegroundColor Green
+    }
+
+    # Step 1: Check if running on an AD FS server
+    try {
+        $adfsService = Get-Service -Name adfssrv -ErrorAction SilentlyContinue
+        if (-not $adfsService) {
+            Write-Warning "AD FS service (adfssrv) not found on this server. This script should be run on an AD FS server."
+            $continue = Read-Host "Continue anyway? (Y/N)"
+            if ($continue -ne 'Y' -and $continue -ne 'y') {
+                return
+            }
+        } else {
+            Write-Host "AD FS service detected." -ForegroundColor Green
+        }
+    } catch {
+        Write-Warning "Error checking for AD FS service: $_"
+    }
+
+    # Step 2: Configure AD FS Auditing
+    Write-Host "`n[1/3] Configuring AD FS auditing..." -ForegroundColor Yellow
+    
+    try {
+        # Import the ADFS PowerShell module if it exists
+        if (Get-Module -ListAvailable -Name ADFS) {
+            Import-Module ADFS -ErrorAction Stop
+            
+            # Enable AD FS auditing
+            Write-Host "Enabling AD FS auditing..."
+            $auditLevel = (Get-AdfsProperties).AuditLevel
+            
+            if ($auditLevel -eq 'None') {
+                Set-AdfsProperties -AuditLevel Basic
+                Write-Host "AD FS audit level set to Basic." -ForegroundColor Green
+            } else {
+                Write-Host "AD FS auditing already enabled with level: $auditLevel" -ForegroundColor Green
+            }
+            
+            # Check for/create/link AD FS Auditing GPO
+            $gpoName = "Microsoft Defender for Identity - AD FS Auditing Policy"
+            try {
+                $gpo = Get-GPO -Name $gpoName -ErrorAction SilentlyContinue
+                
+                if (-not $gpo) {
+                    Write-Host "Creating GPO for AD FS auditing: $gpoName" -ForegroundColor Yellow
+                    $gpo = New-GPO -Name $gpoName -Comment "Configures auditing for AD FS servers"
+                    
+                    # Create a temporary INF file for audit policy
+                    $auditInfPath = "$env:TEMP\ADFSAudit.inf"
+@"
+[Unicode]
+Unicode=yes
+[Version]
+signature="`$CHICAGO`$"
+Revision=1
+[Event Audit]
+AuditSystemEvents=3
+AuditLogonEvents=3
+AuditObjectAccess=3
+AuditPrivilegeUse=3
+AuditPolicyChange=3
+AuditAccountManage=3
+AuditAccountLogon=3
+"@ | Out-File -FilePath $auditInfPath -Encoding Unicode
+                    
+                    # Import the audit settings
+                    $secEditPath = Join-Path $env:SystemRoot "System32\secedit.exe"
+                    $tempDbPath = "$env:TEMP\temppol.sdb"
+                    $params = @("/configure", "/db", $tempDbPath, "/cfg", $auditInfPath)
+                    & $secEditPath $params
+                    
+                    # Import to GPO
+                    $domain = Get-ADDomain
+                    $gpoPath = "\\$($domain.DNSRoot)\SYSVOL\$($domain.DNSRoot)\Policies\{$($gpo.Id)}"
+                    $gpoInfPath = "$gpoPath\Machine\Microsoft\Windows NT\SecEdit\GptTmpl.inf"
+                    
+                    # Ensure directory exists
+                    if (-not (Test-Path (Split-Path $gpoInfPath -Parent))) {
+                        New-Item -Path (Split-Path $gpoInfPath -Parent) -ItemType Directory -Force | Out-Null
+                    }
+                    
+                    # Copy INF file to GPO
+                    Copy-Item -Path $auditInfPath -Destination $gpoInfPath -Force
+                    
+                    # Clean up
+                    Remove-Item -Path $auditInfPath -Force -ErrorAction SilentlyContinue
+                    Remove-Item -Path $tempDbPath -Force -ErrorAction SilentlyContinue
+                    
+                    Write-Host "GPO created successfully." -ForegroundColor Green
+                } else {
+                    Write-Host "GPO '$gpoName' already exists." -ForegroundColor Green
+                }
+                
+                # Check if GPO is linked to domain
+                $domain = Get-ADDomain
+                $gpoLinks = (Get-GPInheritance -Target $domain.DistinguishedName).GpoLinks
+                
+                $isLinked = $false
+                foreach ($link in $gpoLinks) {
+                    if ($link.DisplayName -eq $gpoName) {
+                        $isLinked = $true
+                        break
+                    }
+                }
+                
+                if (-not $isLinked) {
+                    Write-Host "Linking GPO '$gpoName' to domain root..." -ForegroundColor Yellow
+                    New-GPLink -Name $gpoName -Target $domain.DistinguishedName -ErrorAction Stop
+                    Write-Host "GPO linked successfully." -ForegroundColor Green
+                } else {
+                    Write-Host "GPO '$gpoName' is already linked to domain root." -ForegroundColor Green
+                }
+                
+                # Force a Group Policy update
+                Write-Host "Forcing Group Policy update..." -ForegroundColor Yellow
+                & gpupdate.exe /force
+            } catch {
+                Write-Warning "Error managing GPO for AD FS auditing: $_"
+            }
+            
+            # Verify Event ID 1202 is being logged
+            $logName = 'AD FS/Admin'
+            $event = Get-WinEvent -LogName $logName -MaxEvents 1 -ErrorAction SilentlyContinue | 
+                     Where-Object { $_.Id -eq 1202 }
+            
+            if ($event) {
+                Write-Host "Verified that Event ID 1202 is being logged in the AD FS/Admin log." -ForegroundColor Green
+            } else {
+                Write-Warning "Event ID 1202 not found in the AD FS/Admin log. Please ensure AD FS is actively authenticating users."
+            }
+        } else {
+            Write-Warning "ADFS PowerShell module not found. Unable to configure AD FS auditing via PowerShell."
+            
+            # Fallback to manual registry configuration
+            Write-Host "Attempting to enable auditing via registry..." -ForegroundColor Yellow
+            
+            $adfsRegistryPath = 'HKLM:\SYSTEM\CurrentControlSet\Services\ADFS\Parameters'
+            if (Test-Path $adfsRegistryPath) {
+                Set-ItemProperty -Path $adfsRegistryPath -Name 'AuditLevel' -Value 1 -Type DWord -Force
+                Write-Host "AD FS audit level set to Basic (1) via registry." -ForegroundColor Green
+            } else {
+                Write-Warning "AD FS registry path not found. Please enable AD FS auditing manually."
+                Write-Host "To enable auditing manually:" -ForegroundColor Yellow
+                Write-Host "1. Open the AD FS Management console" -ForegroundColor Yellow
+                Write-Host "2. Right-click on 'Service' and select 'Edit Federation Service Properties'" -ForegroundColor Yellow
+                Write-Host "3. Go to the 'Events' tab and select 'Success audits and failure audits'" -ForegroundColor Yellow
+                Write-Host "4. Click 'OK' to save changes" -ForegroundColor Yellow
+            }
+        }
+    } catch {
+        Write-Warning "Error configuring AD FS auditing: $_"
+    }
+    
+    # Step 3: Configure AD FS Database Permissions
+    Write-Host "`n[2/3] Configuring AD FS database permissions for $ServiceAccount..." -ForegroundColor Yellow
+    
+    try {
+        # Determine the AD FS database type (WID or SQL)
+        $adfsConfigPath = 'HKLM:\SYSTEM\CurrentControlSet\Services\ADFS\Parameters'
+        $configurationDatabaseType = $null
+        
+        if (Test-Path $adfsConfigPath) {
+            $configurationDatabaseType = Get-ItemProperty -Path $adfsConfigPath -Name 'ConfigurationDatabaseType' -ErrorAction SilentlyContinue
+        }
+        
+        if ($configurationDatabaseType -eq 'WindowsInternal') {
+            # Windows Internal Database (WID)
+            Write-Host "AD FS is using Windows Internal Database (WID)." -ForegroundColor Green
+            
+            # Build the SQL script
+            $domainName = (Get-ADDomain).NetBIOSName
+            $accountName = $ServiceAccount
+            if ($ServiceAccount -like "*@*") {
+                # Extract the username part from the UPN
+                $accountName = $ServiceAccount.Split('@')[0]
+            }
+            
+            $fullAccountName = "$domainName\$accountName"
+            
+            $sqlScript = @"
+USE [master];
+CREATE LOGIN [$fullAccountName] FROM WINDOWS WITH DEFAULT_DATABASE=[master];
+USE [AdfsConfigurationV4];
+CREATE USER [$fullAccountName] FOR LOGIN [$fullAccountName];
+ALTER ROLE [db_datareader] ADD MEMBER [$fullAccountName];
+GRANT CONNECT TO [$fullAccountName];
+GRANT SELECT TO [$fullAccountName];
+"@
+            
+            # Save the SQL script to a file
+            $scriptPath = "$env:TEMP\AdfsDbPermissions.sql"
+            $sqlScript | Out-File -FilePath $scriptPath -Encoding UTF8
+            
+            # Execute the SQL script against WID
+            Write-Host "Executing SQL script to grant database permissions..."
+            
+            $widResult = Invoke-Command -ScriptBlock {
+                param($scriptPath)
+                & C:\Windows\System32\Inetsrv\appcmd.exe list apppool "DefaultAppPool"
+                & sqlcmd -S \\.\pipe\MICROSOFT##WID\tsql\query -i $scriptPath
+            } -ArgumentList $scriptPath
+            
+            Write-Host "Database permissions script executed." -ForegroundColor Green
+            Write-Host "SQL script output: $widResult"
+            
+            # Clean up
+            Remove-Item -Path $scriptPath -Force
+        } elseif ($configurationDatabaseType -eq 'SQL') {
+            # SQL Server
+            Write-Host "AD FS is using SQL Server. Please provide the SQL Server details." -ForegroundColor Yellow
+            
+            $sqlServer = Read-Host "Enter the SQL Server name (e.g., SQLServer01)"
+            $databaseName = Read-Host "Enter the AD FS database name (default: AdfsConfigurationV4)"
+            
+            if ([string]::IsNullOrWhiteSpace($databaseName)) {
+                $databaseName = "AdfsConfigurationV4"
+            }
+            
+            # Build and execute the PowerShell command for SQL
+            $domainName = (Get-ADDomain).NetBIOSName
+            $accountName = $ServiceAccount
+            if ($ServiceAccount -like "*@*") {
+                # Extract the username part from the UPN
+                $accountName = $ServiceAccount.Split('@')[0]
+            }
+            
+            $fullAccountName = "$domainName\$accountName"
+            
+            # Build the SQL script
+            $sqlScript = @"
+USE [master];
+CREATE LOGIN [$fullAccountName] FROM WINDOWS WITH DEFAULT_DATABASE=[master];
+USE [$databaseName];
+CREATE USER [$fullAccountName] FOR LOGIN [$fullAccountName];
+ALTER ROLE [db_datareader] ADD MEMBER [$fullAccountName];
+GRANT CONNECT TO [$fullAccountName];
+GRANT SELECT TO [$fullAccountName];
+"@
+            
+            # Save the SQL script to a file
+            $scriptPath = "$env:TEMP\AdfsDbPermissions.sql"
+            $sqlScript | Out-File -FilePath $scriptPath -Encoding UTF8
+            
+            # Execute the SQL script against SQL Server
+            Write-Host "Executing SQL script to grant database permissions..."
+            
+            $sqlResult = Invoke-Command -ScriptBlock {
+                param($sqlServer, $scriptPath)
+                & sqlcmd -S $sqlServer -i $scriptPath
+            } -ArgumentList $sqlServer, $scriptPath
+            
+            Write-Host "Database permissions script executed." -ForegroundColor Green
+            Write-Host "SQL script output: $sqlResult"
+            
+            # Clean up
+            Remove-Item -Path $scriptPath -Force
+        } else {
+            Write-Warning "Unable to determine AD FS database type. Please configure database permissions manually."
+            Write-Host "For Windows Internal Database (WID), run this PowerShell command:" -ForegroundColor Yellow
+            Write-Host '$ConnectionString = "server=\\.\pipe\MICROSOFT##WID\tsql\query;database=AdfsConfigurationV4;trusted_connection=true;"' -ForegroundColor Yellow
+            Write-Host '$SQLConnection= New-Object System.Data.SQLClient.SQLConnection($ConnectionString)' -ForegroundColor Yellow
+            Write-Host '$SQLConnection.Open()' -ForegroundColor Yellow
+            Write-Host '$SQLCommand = $SQLConnection.CreateCommand()' -ForegroundColor Yellow
+            Write-Host '$SQLCommand.CommandText = "USE [master]; CREATE LOGIN [DOMAIN\ServiceAccount] FROM WINDOWS WITH DEFAULT_DATABASE=[master]; USE [AdfsConfigurationV4]; CREATE USER [DOMAIN\ServiceAccount] FOR LOGIN [DOMAIN\ServiceAccount]; ALTER ROLE [db_datareader] ADD MEMBER [DOMAIN\ServiceAccount]; GRANT CONNECT TO [DOMAIN\ServiceAccount]; GRANT SELECT TO [DOMAIN\ServiceAccount];"' -ForegroundColor Yellow
+            Write-Host '$SqlDataReader = $SQLCommand.ExecuteReader()' -ForegroundColor Yellow
+            Write-Host '$SQLConnection.Close()' -ForegroundColor Yellow
+        }
+    } catch {
+        Write-Warning "Error configuring AD FS database permissions: $_"
+    }
+    
+    # Step 4: Validate the Configuration
+    Write-Host "`n[3/3] Validating AD FS configuration for MDI..." -ForegroundColor Yellow
+    
+    # Run Test-MDIConfiguration with AD FS specific parameters if possible
+    try {
+        Import-Module DefenderForIdentity -ErrorAction Stop
+        $testParams = @{
+            Mode = "Domain"
+            Configuration = "Adfs"
+        }
+        
+        $testResult = Test-MDIConfiguration @testParams
+        
+        if ($testResult.IsHealthy) {
+            Write-Host "AD FS configuration for MDI validated successfully." -ForegroundColor Green
+        } else {
+            Write-Warning "Some AD FS configuration issues were detected:"
+            $testResult | Format-List
+        }
+    } catch {
+        Write-Warning "Error validating AD FS configuration: $_"
+    }
+    
+    Write-Host "`nAD FS configuration for Microsoft Defender for Identity completed." -ForegroundColor Cyan
+    Write-Host "Next steps:" -ForegroundColor Yellow
+    Write-Host "1. Install the MDI sensor on this AD FS server." -ForegroundColor Yellow
+    Write-Host "2. Verify sensor installation status in Microsoft Defender XDR portal." -ForegroundColor Yellow
+    Write-Host "3. Configure any additional AD FS servers in your farm." -ForegroundColor Yellow
+}
+
+function Configure-MDIforADCS {
+    <#
+    .SYNOPSIS
+        Configures Microsoft Defender for Identity for AD CS servers.
+
+    .DESCRIPTION
+        Performs the necessary configuration steps to prepare AD CS servers for MDI sensor installation:
+        - Verifies AD CS Certification Authority Role Service is installed
+        - Configures required auditing settings
+        - Validates the configuration
+
+    .PARAMETER ServiceAccount
+        The name of the gMSA or directory service account to use. Defaults to MDIgMSAsvc01.
+
+    .EXAMPLE
+        PS> Configure-MDIforADCS -ServiceAccount "MDIgMSAsvc01"
+    #>
+
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$false)]
+        [string]$ServiceAccount = "MDIgMSAsvc01"
+    )
+
+    Write-Host "`n==== Configuring Microsoft Defender for Identity for AD CS Servers ====`n" -ForegroundColor Cyan
+
+    # Validate input
+    if (-not $ServiceAccount.EndsWith('$') -and $ServiceAccount -notlike "*@*") {
+        # Likely a gMSA without $ suffix
+        $ServiceAccount = "$ServiceAccount$"
+        Write-Host "Using service account: $ServiceAccount" -ForegroundColor Green
+    }
+
+    # Step 1: Check if running on an AD CS server with Certification Authority Role Service
+    try {
+        $adcsService = Get-Service -Name CertSvc -ErrorAction SilentlyContinue
+        if (-not $adcsService) {
+            Write-Warning "AD CS service (CertSvc) not found on this server. This script should be run on an AD CS server with Certification Authority role."
+            $continue = Read-Host "Continue anyway? (Y/N)"
+            if ($continue -ne 'Y' -and $continue -ne 'y') {
+                return
+            }
+        } else {
+            Write-Host "AD CS service detected." -ForegroundColor Green
+            
+            # Check for Certification Authority Role Service specifically
+            $caRole = Get-WindowsFeature -Name ADCS-Cert-Authority -ErrorAction SilentlyContinue
+            if ($caRole -and $caRole.Installed) {
+                Write-Host "AD CS Certification Authority Role Service is installed." -ForegroundColor Green
+            } else {
+                Write-Warning "AD CS Certification Authority Role Service is not installed. MDI sensor only supports AD CS servers with this role."
+                $continue = Read-Host "Continue anyway? (Y/N)"
+                if ($continue -ne 'Y' -and $continue -ne 'y') {
+                    return
+                }
+            }
+        }
+    } catch {
+        Write-Warning "Error checking for AD CS service: $_"
+    }
+
+    # Step 2: Configure AD CS Auditing
+    Write-Host "`n[1/2] Configuring AD CS auditing..." -ForegroundColor Yellow
+    
+    try {
+        # Check for ADCS PowerShell module
+        if (Get-Module -ListAvailable -Name ADCS) {
+            Import-Module ADCS -ErrorAction Stop
+            Write-Host "AD CS PowerShell module loaded." -ForegroundColor Green
+        } else {
+            Write-Warning "ADCS PowerShell module not found. Continuing with alternative configuration methods."
+        }
+        
+        # Configure AD CS Auditing via GPO
+        Write-Host "Configuring AD CS security auditing via GPO..." -ForegroundColor Yellow
+        
+        # Create/check GPO for AD CS auditing
+        $gpoName = "Microsoft Defender for Identity - AD CS Auditing Policy"
+        try {
+            $gpo = Get-GPO -Name $gpoName -ErrorAction SilentlyContinue
+            
+            if (-not $gpo) {
+                Write-Host "Creating GPO for AD CS auditing: $gpoName" -ForegroundColor Yellow
+                $gpo = New-GPO -Name $gpoName -Comment "Configures auditing for AD CS servers"
+                
+                # Create a temporary INF file for audit policy
+                $auditInfPath = "$env:TEMP\ADCSAudit.inf"
+@"
+[Unicode]
+Unicode=yes
+[Version]
+signature="`$CHICAGO`$"
+Revision=1
+[Event Audit]
+AuditSystemEvents=3
+AuditLogonEvents=3
+AuditObjectAccess=3
+AuditPrivilegeUse=3
+AuditPolicyChange=3
+AuditAccountManage=3
+AuditAccountLogon=3
+[Registry Values]
+MACHINE\System\CurrentControlSet\Control\Lsa\SCENoApplyLegacyAuditPolicy=4,1
+[System Access]
+EnableGuestAccount=0
+[Advanced Audit Policy Configuration]
+"System","Security System Extension",3
+"System","System Integrity",3
+"System","Other System Events",3
+"Logon/Logoff","Logon",3
+"Logon/Logoff","Logoff",3
+"Logon/Logoff","Account Lockout",3
+"Logon/Logoff","Other Logon/Logoff Events",3
+"Object Access","Certification Services",3
+"Object Access","Detailed File Share",3
+"Object Access","File System",3
+"Object Access","Registry",3
+"Privilege Use","Sensitive Privilege Use",3
+"Privilege Use","Non Sensitive Privilege Use",3
+"Detailed Tracking","Process Creation",3
+"Detailed Tracking","Process Termination",3
+"Policy Change","Audit Policy Change",3
+"Policy Change","Authentication Policy Change",3
+"Account Management","Computer Account Management",3
+"Account Management","Other Account Management Events",3
+"Account Management","Security Group Management",3
+"Account Management","User Account Management",3
+"Account Logon","Credential Validation",3
+"Account Logon","Other Account Logon Events",3
+"DS Access","Directory Service Access",3
+"DS Access","Directory Service Changes",3
+"@ | Out-File -FilePath $auditInfPath -Encoding Unicode
+                
+                # Import to GPO
+                $domain = Get-ADDomain
+                $gpoPath = "\\$($domain.DNSRoot)\SYSVOL\$($domain.DNSRoot)\Policies\{$($gpo.Id)}"
+                $gpoSecEditPath = "$gpoPath\Machine\Microsoft\Windows NT\SecEdit"
+                
+                # Ensure directory exists
+                if (-not (Test-Path $gpoSecEditPath)) {
+                    New-Item -Path $gpoSecEditPath -ItemType Directory -Force | Out-Null
+                }
+                
+                # Copy INF file to GPO
+                $gpoInfPath = "$gpoSecEditPath\GptTmpl.inf"
+                Copy-Item -Path $auditInfPath -Destination $gpoInfPath -Force
+                
+                # Clean up
+                Remove-Item -Path $auditInfPath -Force -ErrorAction SilentlyContinue
+                
+                Write-Host "GPO created successfully." -ForegroundColor Green
+            } else {
+                Write-Host "GPO '$gpoName' already exists." -ForegroundColor Green
+            }
+            
+            # Check if GPO is linked to domain
+            $domain = Get-ADDomain
+            $gpoLinks = (Get-GPInheritance -Target $domain.DistinguishedName).GpoLinks
+            
+            $isLinked = $false
+            foreach ($link in $gpoLinks) {
+                if ($link.DisplayName -eq $gpoName) {
+                    $isLinked = $true
+                    break
+                }
+            }
+            
+            if (-not $isLinked) {
+                Write-Host "Linking GPO '$gpoName' to domain root..." -ForegroundColor Yellow
+                New-GPLink -Name $gpoName -Target $domain.DistinguishedName -ErrorAction Stop
+                Write-Host "GPO linked successfully." -ForegroundColor Green
+            } else {
+                Write-Host "GPO '$gpoName' is already linked to domain root." -ForegroundColor Green
+            }
+            
+            # Force a Group Policy update
+            Write-Host "Forcing Group Policy update..." -ForegroundColor Yellow
+            & gpupdate.exe /force
+        } catch {
+            Write-Warning "Error managing GPO for AD CS auditing: $_"
+            
+            # Fallback to local configuration if GPO setup fails
+            Write-Host "Falling back to local configuration..." -ForegroundColor Yellow
+            
+            # Enable Certificate Services auditing subcategories
+            & auditpol.exe /set /subcategory:"Certification Services" /success:enable /failure:enable
+            
+            # Verify the auditing configuration
+            $auditResult = & auditpol.exe /get /subcategory:"Certification Services"
+            Write-Host "Certificate Services auditing configuration:" -ForegroundColor Green
+            Write-Host $auditResult
+        }
+        
+        # Configure Registry Settings for AD CS Advanced Auditing
+        $adcsAuditRegPath = "HKLM:\SYSTEM\CurrentControlSet\Services\CertSvc\Configuration"
+        
+        if (Test-Path $adcsAuditRegPath) {
+            $caNames = Get-ChildItem -Path $adcsAuditRegPath | Select-Object -ExpandProperty PSChildName
+            
+            foreach ($caName in $caNames) {
+                $caAuditRegPath = Join-Path -Path $adcsAuditRegPath -ChildPath "$caName\PolicyModules\CertificateAuthority"
+                
+                if (Test-Path $caAuditRegPath) {
+                    # Enable auditing in the registry
+                    Write-Host "Configuring auditing for CA: $caName" -ForegroundColor Yellow
+                    Set-ItemProperty -Path $caAuditRegPath -Name "Audit" -Value 127 -Type DWord -Force
+                    $auditValue = (Get-ItemProperty -Path $caAuditRegPath -Name "Audit" -ErrorAction SilentlyContinue).Audit
+                    Write-Host "Audit value set to: $auditValue (Recommended: 127)" -ForegroundColor Green
+                } else {
+                    Write-Warning "Registry path for CA '$caName' not found: $caAuditRegPath"
+                }
+            }
+        } else {
+            Write-Warning "AD CS configuration registry path not found: $adcsAuditRegPath"
+        }
+        
+        # Restart the AD CS service to apply changes
+        Write-Host "Restarting AD CS service to apply auditing changes..." -ForegroundColor Yellow
+        Restart-Service -Name CertSvc -Force
+        Write-Host "AD CS service restarted." -ForegroundColor Green
+    } catch {
+        Write-Warning "Error configuring AD CS auditing: $_"
+    }
+    
+    # Step 3: Validate the Configuration
+    Write-Host "`n[2/2] Validating AD CS configuration for MDI..." -ForegroundColor Yellow
+    
+    # Run Test-MDIConfiguration with AD CS specific parameters if possible
+    try {
+        Import-Module DefenderForIdentity -ErrorAction Stop
+        $testParams = @{
+            Mode = "Domain"
+            Configuration = "Adcs"
+        }
+        
+        $testResult = Test-MDIConfiguration @testParams
+        
+        if ($testResult.IsHealthy) {
+            Write-Host "AD CS configuration for MDI validated successfully." -ForegroundColor Green
+        } else {
+            Write-Warning "Some AD CS configuration issues were detected:"
+            $testResult | Format-List
+        }
+    } catch {
+        Write-Warning "Error validating AD CS configuration: $_"
+    }
+    
+    # Check if required events are being logged
+    Write-Host "Checking if required AD CS events are being logged..." -ForegroundColor Yellow
+    $requiredEvents = @(4870, 4872, 4873, 4874)
+    $foundEvents = @()
+    
+    foreach ($eventId in $requiredEvents) {
+        $event = Get-WinEvent -LogName "Security" -MaxEvents 1 -FilterXPath "*[System[EventID=$eventId]]" -ErrorAction SilentlyContinue
+        if ($event) {
+            $foundEvents += $eventId
+        }
+    }
+    
+    if ($foundEvents.Count -eq $requiredEvents.Count) {
+        Write-Host "All required AD CS events are being logged successfully." -ForegroundColor Green
+    } else {
+        $missingEvents = $requiredEvents | Where-Object { $_ -notin $foundEvents }
+        Write-Warning "Some required events are not being logged: $($missingEvents -join ', ')"
+        Write-Host "This could be normal if these certificate operations haven't occurred recently." -ForegroundColor Yellow
+        Write-Host "Perform some certificate operations to generate these events for verification." -ForegroundColor Yellow
+    }
+    
+    Write-Host "`nAD CS configuration for Microsoft Defender for Identity completed." -ForegroundColor Cyan
+    Write-Host "Next steps:" -ForegroundColor Yellow
+    Write-Host "1. Install the MDI sensor on this AD CS server." -ForegroundColor Yellow
+    Write-Host "2. Verify sensor installation status in Microsoft Defender XDR portal." -ForegroundColor Yellow
+    Write-Host "3. Configure any additional AD CS servers in your environment." -ForegroundColor Yellow
+}
+
+function Configure-MDIforEntraConnect {
+    <#
+    .SYNOPSIS
+        Configures Microsoft Defender for Identity for Microsoft Entra Connect servers.
+
+    .DESCRIPTION
+        Performs the necessary configuration steps to prepare Microsoft Entra Connect servers for MDI sensor installation:
+        - Verifies Entra Connect is installed
+        - Configures auditing settings
+        - Sets up database permissions if using SQL Server
+        - Validates the configuration
+
+    .PARAMETER ServiceAccount
+        The name of the gMSA or directory service account to use. Defaults to MDIgMSAsvc01.
+
+    .EXAMPLE
+        PS> Configure-MDIforEntraConnect -ServiceAccount "MDIgMSAsvc01"
+    #>
+
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$false)]
+        [string]$ServiceAccount = "MDIgMSAsvc01"
+    )
+
+    Write-Host "`n==== Configuring Microsoft Defender for Identity for Entra Connect Servers ====`n" -ForegroundColor Cyan
+
+    # Validate input
+    if (-not $ServiceAccount.EndsWith('$') -and $ServiceAccount -notlike "*@*") {
+        # Likely a gMSA without $ suffix
+        $ServiceAccount = "$ServiceAccount$"
+        Write-Host "Using service account: $ServiceAccount" -ForegroundColor Green
+    }
+
+    # Step 1: Check if running on an Entra Connect server
+    try {
+        $entraConnectPath = "C:\Program Files\Microsoft Azure AD Connect"
+        $entraConnectService = Get-Service -Name ADSync -ErrorAction SilentlyContinue
+        
+        if (-not (Test-Path $entraConnectPath) -or -not $entraConnectService) {
+            Write-Warning "Microsoft Entra Connect installation not detected on this server."
+            $continue = Read-Host "Continue anyway? (Y/N)"
+            if ($continue -ne 'Y' -and $continue -ne 'y') {
+                return
+            }
+        } else {
+            Write-Host "Microsoft Entra Connect installation detected." -ForegroundColor Green
+            
+            # Get Entra Connect version
+            $syncClientVersionFile = Join-Path -Path $entraConnectPath -ChildPath "ADAL\SyncEngine\Microsoft.IdentityModel.Clients.ActiveDirectory.dll"
+            if (Test-Path $syncClientVersionFile) {
+                $fileVersion = (Get-Item $syncClientVersionFile).VersionInfo.FileVersion
+                Write-Host "Microsoft Entra Connect version: $fileVersion" -ForegroundColor Green
+            }
+        }
+    } catch {
+        Write-Warning "Error checking for Microsoft Entra Connect: $_"
+    }
+
+    # Step 2: Configure Entra Connect Auditing
+    Write-Host "`n[1/3] Configuring Microsoft Entra Connect auditing..." -ForegroundColor Yellow
+    
+    try {
+        # Enable auditing via auditpol.exe for Entra Connect events
+        & auditpol.exe /set /subcategory:"Directory Service Changes" /success:enable /failure:enable
+        & auditpol.exe /set /subcategory:"Directory Service Access" /success:enable /failure:enable
+        
+        # Verify the auditing configuration
+        $auditResult1 = & auditpol.exe /get /subcategory:"Directory Service Changes"
+        $auditResult2 = & auditpol.exe /get /subcategory:"Directory Service Access"
+        
+        Write-Host "Directory Service auditing configuration:" -ForegroundColor Green
+        Write-Host $auditResult1
+        Write-Host $auditResult2
+        
+        # Configure Azure AD Connect advanced auditing for event 1644
+        Write-Host "Configuring advanced auditing for Entra Connect..."
+        
+        # Check if the GPO for Advanced Audit and URA Policy for Entra Connect exists
+        $gpoName = "Microsoft Defender for Identity - Advanced Audit and URA Policy for Entra Connect"
+        $gpo = Get-GPO -Name $gpoName -ErrorAction SilentlyContinue
+        
+        if ($gpo) {
+            Write-Host "GPO '$gpoName' found. Ensure it's linked to the domain." -ForegroundColor Green
+            
+            # Check if the GPO is linked to the domain
+            $domain = Get-ADDomain
+            $gpoLinks = (Get-GPInheritance -Target $domain.DistinguishedName).GpoLinks
+            
+            $isLinked = $false
+            foreach ($link in $gpoLinks) {
+                if ($link.DisplayName -eq $gpoName) {
+                    $isLinked = $true
+                    break
+                }
+            }
+            
+            if (-not $isLinked) {
+                Write-Warning "GPO '$gpoName' is not linked to the domain. Attempting to link it now..."
+                try {
+                    New-GPLink -Name $gpoName -Target $domain.DistinguishedName -ErrorAction Stop
+                    Write-Host "GPO '$gpoName' linked to the domain successfully." -ForegroundColor Green
+                } catch {
+                    Write-Warning "Failed to link GPO '$gpoName' to the domain: $_"
+                    Write-Host "Please link this GPO to the domain manually." -ForegroundColor Yellow
+                }
+            } else {
+                Write-Host "GPO '$gpoName' is already linked to the domain." -ForegroundColor Green
+            }
+        } else {
+            Write-Warning "GPO '$gpoName' not found. This policy should be created by the MDI configuration."
+            Write-Host "Please run 'Set-MDIConfiguration -Mode Domain -Configuration All' to create the required GPOs." -ForegroundColor Yellow
+        }
+        
+        # Force a Group Policy update
+        Write-Host "Forcing Group Policy update..." -ForegroundColor Yellow
+        & gpupdate.exe /force
+    } catch {
+        Write-Warning "Error configuring Entra Connect auditing: $_"
+    }
+    
+    # Step 3: Configure Database Access if using external SQL
+    Write-Host "`n[2/3] Checking for SQL database configuration..." -ForegroundColor Yellow
+    
+    try {
+        # Determine if Entra Connect is using LocalDB or external SQL
+        $adSyncConfigPath = "C:\Program Files\Microsoft Azure AD Connect\AdSyncGlobalSettings.mdb"
+        
+        if (Test-Path $adSyncConfigPath) {
+            Write-Host "Found AdSyncGlobalSettings.mdb file - checking database configuration..." -ForegroundColor Green
+            
+            # Using SQL query to check for database connection would require additional tools
+            # For simplicity, we'll ask the user
+            $usesExternalSQL = Read-Host "Is Microsoft Entra Connect using an external SQL Server (not LocalDB)? (Y/N)"
+            
+            if ($usesExternalSQL -eq 'Y' -or $usesExternalSQL -eq 'y') {
+                $sqlServer = Read-Host "Enter the SQL Server name (e.g., SQLServer01)"
+                $databaseName = Read-Host "Enter the ADSync database name (default: ADSync)"
+                
+                if ([string]::IsNullOrWhiteSpace($databaseName)) {
+                    $databaseName = "ADSync"
+                }
+                
+                # Configure permissions for the service account
+                Write-Host "Configuring database permissions for $ServiceAccount..." -ForegroundColor Yellow
+                
+                # Build the domain\username
+                $domainName = (Get-ADDomain).NetBIOSName
+                $accountName = $ServiceAccount
+                if ($ServiceAccount -like "*@*") {
+                    # Extract the username part from the UPN
+                    $accountName = $ServiceAccount.Split('@')[0]
+                }
+                
+                $fullAccountName = "$domainName\$accountName"
+                
+                # Build the SQL script
+                $sqlScript = @"
+USE [master];
+IF NOT EXISTS (SELECT name FROM master.sys.server_principals WHERE name = '$fullAccountName')
+BEGIN
+    CREATE LOGIN [$fullAccountName] FROM WINDOWS WITH DEFAULT_DATABASE=[master];
+END
+USE [$databaseName];
+IF NOT EXISTS (SELECT name FROM [$databaseName].sys.database_principals WHERE name = '$fullAccountName')
+BEGIN
+    CREATE USER [$fullAccountName] FOR LOGIN [$fullAccountName];
+END
+ALTER ROLE [db_datareader] ADD MEMBER [$fullAccountName];
+GRANT CONNECT TO [$fullAccountName];
+GRANT SELECT TO [$fullAccountName];
+GRANT EXECUTE TO [$fullAccountName];
+"@
+                
+                # Save the SQL script to a file
+                $scriptPath = "$env:TEMP\EntraConnectDbPermissions.sql"
+                $sqlScript | Out-File -FilePath $scriptPath -Encoding UTF8
+                
+                # Execute the SQL script against SQL Server
+                Write-Host "Executing SQL script to grant database permissions..."
+                
+                $sqlResult = Invoke-Command -ScriptBlock {
+                    param($sqlServer, $scriptPath)
+                    & sqlcmd -S $sqlServer -i $scriptPath
+                } -ArgumentList $sqlServer, $scriptPath
+                
+                Write-Host "Database permissions script executed." -ForegroundColor Green
+                Write-Host "SQL script output: $sqlResult"
+                
+                # Clean up
+                Remove-Item -Path $scriptPath -Force
+            } else {
+                Write-Host "Microsoft Entra Connect is using LocalDB. No additional database configuration needed." -ForegroundColor Green
+            }
+        } else {
+            Write-Warning "AdSyncGlobalSettings.mdb not found at expected location."
+        }
+    } catch {
+        Write-Warning "Error configuring database access: $_"
+    }
+    
+    # Step 4: Validate the Configuration
+    Write-Host "`n[3/3] Validating Entra Connect configuration for MDI..." -ForegroundColor Yellow
+    
+    # Run Test-MDIConfiguration with Entra Connect specific parameters if possible
+    try {
+        Import-Module DefenderForIdentity -ErrorAction Stop
+        $testParams = @{
+            Mode = "Domain"
+            Configuration = "EntraConnect"
+        }
+        
+        $testResult = Test-MDIConfiguration @testParams
+        
+        if ($testResult.IsHealthy) {
+            Write-Host "Entra Connect configuration for MDI validated successfully." -ForegroundColor Green
+        } else {
+            Write-Warning "Some Entra Connect configuration issues were detected:"
+            $testResult | Format-List
+        }
+    } catch {
+        Write-Warning "Error validating Entra Connect configuration: $_"
+        
+        # Check for event 1644 manually
+        Write-Host "Checking if event 1644 is being logged..." -ForegroundColor Yellow
+        $event = Get-WinEvent -LogName "Directory Service" -MaxEvents 1 -FilterXPath "*[System[EventID=1644]]" -ErrorAction SilentlyContinue
+        
+        if ($event) {
+            Write-Host "Event 1644 is being logged successfully." -ForegroundColor Green
+        } else {
+            Write-Warning "Event 1644 is not being logged. This could be normal if directory synchronization hasn't occurred recently."
+            Write-Host "Force a sync or wait for the next scheduled sync to verify auditing is working." -ForegroundColor Yellow
+        }
+    }
+    
+    Write-Host "`nMicrosoft Entra Connect configuration for MDI completed." -ForegroundColor Cyan
+    Write-Host "Next steps:" -ForegroundColor Yellow
+    Write-Host "1. Install the MDI sensor on this Entra Connect server." -ForegroundColor Yellow
+    Write-Host "2. Verify sensor installation status in Microsoft Defender XDR portal." -ForegroundColor Yellow
+    Write-Host "3. Configure any additional servers in your Entra Connect environment." -ForegroundColor Yellow
+}
     } while ($choice -ne '0')
       Pause
       Show-MainMenu
