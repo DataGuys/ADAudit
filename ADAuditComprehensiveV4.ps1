@@ -3536,7 +3536,7 @@ function Show-MainMenu {
     Write-Host " 27) Prepare AD for MDI Deployment"                       -ForegroundColor Cyan
     Write-Host " 28) Set Secure TLS Config Registry Settings"             -ForegroundColor Cyan
     Write-Host ""
-    Write-Host " 29) Exit"
+    Write-Host " 29) Exit" -ForegroundColor Magenta
     Write-Host ""
 }
 
@@ -3583,7 +3583,7 @@ do {
         28 { Set-SecureTLSConfig }
 
         29 {
-            Write-Host "Exiting..."
+            Write-Host "Exiting..." -ForegroundColor Green
             break
         }
 
@@ -3592,6 +3592,6 @@ do {
             Pause
         }
     }
-} while ($choice -ne 28)
+} while ($choice -ne 29)
 
 Write-Host "Done, Thank you for using, we enjoy feedback and suggestions please drop us a line." -ForegroundColor Green
