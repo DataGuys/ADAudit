@@ -3516,6 +3516,103 @@ function Install-MicrosoftEdge {
     Pause
 }
 
+function Deploy-EdgeAndRemoveIE {
+    [CmdletBinding()]
+    param (
+        [Parameter()]
+        [string]$OutputPath = "JobResults.csv"
+    )
+    
+    # Import the required modules
+    Import-Module ActiveDirectory
+    $jobs = @()
+    $results = @()
+    
+    # Fetch list of Windows Server objects from Active Directory
+    $servers = Get-ADComputer -Filter 'OperatingSystem -like "Windows Server*"'
+    
+    # Check server availability first
+    $onlineServers = @()
+    foreach ($server in $servers) {
+        $serverName = $server.DNSHostName
+        if (Test-Connection -ComputerName $serverName -Count 1 -Quiet) {
+            Write-Host -ForegroundColor Green "$serverName is online. Adding to queue."
+            $onlineServers += $server
+        } else {
+            Write-Host -ForegroundColor Yellow "$serverName is offline. Skipping."
+        }
+    }
+    
+    # Start jobs for online servers
+    foreach ($server in $onlineServers) {
+        $serverName = $server.DNSHostName
+        $serverOS = $server.OperatingSystem
+        $jobs += Start-Job -ScriptBlock {
+            param ($serverName, $serverOS)
+            $result = [PSCustomObject]@{
+                ServerName    = $serverName
+                Status        = "Online"
+                RebootPending = $false
+            }
+            
+            # Install Microsoft Edge
+            Start-Process {[Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
+            md -Path $env:temp\edgeinstall -erroraction SilentlyContinue | Out-Null
+            $Download = join-path $env:temp\edgeinstall MicrosoftEdgeEnterpriseX64.msi
+            Invoke-WebRequest 'http://go.microsoft.com/fwlink/?LinkID=2093437'  -OutFile $Download
+            Start-Process "$Download" -ArgumentList "/quiet"
+            }
+            
+            # Remove Internet Explorer based on OS
+            if ($serverOS -like "*2016*") {
+                DISM /Online /Disable-Feature /FeatureName:Internet-Explorer-Optional-amd64
+            } elseif ($serverOS -like "*2012 R2*") {
+                Uninstall-WindowsFeature -Name Web-IE-Optional-Feature
+            }
+            
+            # Check if a reboot is pending
+            $rebootRequired = Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending" -ErrorAction SilentlyContinue
+            $result.RebootPending = $rebootRequired
+            $result.Status += " - Operations Completed"
+            return $result
+        } -ArgumentList $serverName, $serverOS
+    }
+    
+    # Monitor jobs for completion and log progress
+    do {
+        $incompleteJobs = $jobs | Where-Object { $_.State -eq 'Running' }
+        
+        # Sleep for a few seconds before checking again
+        Start-Sleep -Seconds 5
+        
+        Write-Host -ForegroundColor Cyan "Polling jobs. Incomplete jobs count: $($incompleteJobs.Count)"
+    } while ($incompleteJobs.Count -gt 0)
+    
+    # Collect job outputs and provide status updates
+    $jobs | ForEach-Object {
+        $jobResult = Receive-Job -Job $_
+        if ($jobResult.Status -like "*Operations Completed") {
+            Write-Host -ForegroundColor Green "$($jobResult.ServerName) operations completed successfully."
+            if ($jobResult.RebootPending) {
+                Write-Host -ForegroundColor Magenta "$($jobResult.ServerName) requires a reboot."
+            }
+        } else {
+            Write-Host -ForegroundColor Red "$($jobResult.ServerName) operations failed."
+        }
+        $results += $jobResult
+    }
+    
+    # Export results to CSV
+    $results | Export-Csv -Path $OutputPath -NoTypeInformation
+    
+    # Remove the completed jobs
+    $jobs | Remove-Job
+    
+    return $results
+}
+    Pause
+}
+
 function Show-MainMenu {
     Clear-Host
 
@@ -3571,8 +3668,9 @@ function Show-MainMenu {
     Write-Host " 28) Set Secure TLS Config Registry Settings"             -ForegroundColor Cyan
     Write-Host " 29) Remove Internet Explorer IE Local Machine"           -ForegroundColor Cyan
     Write-Host " 30) Install Edge Enterprise x64 Local Machine"           -ForegroundColor Cyan
+    Write-Host " 31) Sweep Internet Explorer from all Windows Servers and Install Edge Enterprise x64"  -ForegroundColor Cyan
     Write-Host ""
-    Write-Host " 31) Exit" -ForegroundColor Magenta
+    Write-Host " 32) Exit" -ForegroundColor Magenta
     Write-Host ""
 }
 
@@ -3619,8 +3717,9 @@ do {
         28 { Set-SecureTLSConfig }
         29 { Remove-InternetExplorer }
         30 { Install-MicrosoftEdge  }
+        31 { Deploy-EdgeAndRemoveIE }
 
-        31 {
+        32 {
             Write-Host "Exiting..." -ForegroundColor Green
             break
         }
@@ -3630,6 +3729,6 @@ do {
             Pause
         }
     }
-} while ($choice -ne 31)
+} while ($choice -ne 32)
 
 Write-Host "Done, Thank you for using, we enjoy feedback and suggestions please drop us a line." -ForegroundColor Green
