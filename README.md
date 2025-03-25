@@ -1,7 +1,7 @@
 # ADAudit
 
 Run AD Audit OneLiner
-Run from elevated CMD or PowerShell
+Run from elevated CMD or PowerShell Terminal
 # Stable Version
 
 ```cmd
