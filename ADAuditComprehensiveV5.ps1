@@ -3693,6 +3693,85 @@ function Remove-SMB1Feature {
       return
 }
 
+function Set-DSRMPasswordForAllDCs {
+    [CmdletBinding()]
+    param(
+        [int]$PasswordLength = 20
+    )
+
+    # Ensure the AD module is imported
+    Import-Module ActiveDirectory
+
+    # Helper function to generate a random complex password
+    function New-RandomPassword {
+        param([int]$Length = 20)
+        
+        # These characters typically work fine for ntdsutil in most environments.
+        # Note the removal of problematic characters like ^, =, &, (, ), `, |, and quotes.
+        $complexCharacters = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%_-+~?'
+
+        -join (1..$Length | ForEach-Object {
+            Get-Random -InputObject $complexCharacters.ToCharArray()
+        })
+    }
+
+    # Retrieve all domain controllers in the domain
+    $DomainControllers = Get-ADDomainController -Filter *
+
+    foreach ($DC in $DomainControllers) {
+        $DCName = $DC.HostName
+        Write-Host "`nProcessing domain controller: $($DCName)"
+
+        # Generate a new strong password (plain text)
+        $NewPassword    = New-RandomPassword -Length $PasswordLength
+        $SecurePassword = ConvertTo-SecureString $NewPassword -AsPlainText -Force
+
+        # Invoke-Command to run ntdsutil on the remote DC
+        Invoke-Command -ComputerName $DCName -ScriptBlock {
+            param([System.Security.SecureString]$SecurePassword)
+
+            # Convert SecureString back to plain text on the remote DC
+            $PlainPassword = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+                [Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecurePassword)
+            )
+
+            # Build commands in a multi-line string
+            # (These lines are what you would type interactively in ntdsutil)
+            $commands = @"
+set dsrm password
+reset password on server null
+administrator
+$PlainPassword
+$PlainPassword
+q
+q
+"@
+
+            # Write commands to a temp file
+            $tempFile = Join-Path $env:TEMP ("ntdsutil_{0}.txt" -f [guid]::NewGuid())
+            Set-Content -Path $tempFile -Value $commands -Encoding ASCII
+
+            # Use cmd.exe so that ntdsutil sees the lines via standard input
+            # This is more reliable than PowerShell piping for older utilities.
+            Start-Process -FilePath "cmd.exe" `
+                -ArgumentList "/c type `"$tempFile`" | ntdsutil" `
+                -NoNewWindow -Wait
+
+            # Clean up
+            Remove-Item -Path $tempFile -Force
+        } -ArgumentList $SecurePassword
+
+        # Display the new password for recording
+        Write-Host "New DSRM password for $DCName $NewPassword" -ForegroundColor Green
+        Write-Host "Please record this password securely. It will not be displayed again." -ForegroundColor Yellow
+        Pause  # Optional: remove or comment out if you prefer non-interactive
+    }
+    {
+      Pause
+      Show-MainMenu
+      return
+}
+}
 
 function Show-MainMenu {
     Clear-Host
@@ -3751,8 +3830,9 @@ function Show-MainMenu {
     Write-Host " 30) Install Edge Enterprise x64 Local Machine"           -ForegroundColor Cyan
     Write-Host " 31) Sweep Internet Explorer from all Windows Servers and Install Edge Enterprise x64"  -ForegroundColor Cyan
     Write-Host " 32) Remove SMB1 from Local Machine"                      -ForegroundColor Cyan
+    Write-Host " 33) Reset DSRM Password All DC's"                        -ForegroundColor Cyan
     Write-Host ""
-    Write-Host " 33) Exit" -ForegroundColor Magenta
+    Write-Host " 34) Exit" -ForegroundColor Magenta
     Write-Host ""
 }
 
@@ -3801,8 +3881,9 @@ do {
         30 { Install-MicrosoftEdge  }
         31 { Deploy-EdgeAndRemoveIE }
         32 { Remove-SMB1Feature }
+        33 { Set-DSRMPasswordForAllDCs }
 
-        33 {
+        34 {
             Write-Host "Exiting..." -ForegroundColor Green
             break
         }
@@ -3812,6 +3893,6 @@ do {
             Pause
         }
     }
-} while ($choice -ne 33)
+} while ($choice -ne 34)
 
 Write-Host "Done, Thank you for using, we enjoy feedback and suggestions please drop us a line." -ForegroundColor Green
