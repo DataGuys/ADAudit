@@ -3773,6 +3773,175 @@ q
 }
 }
 
+function Set-AdminFGPP {
+    param (
+        [string]$DomainAdminsPolicyName     = "DomainAdminsPolicy",
+        [string]$EnterpriseAdminsPolicyName = "EnterpriseAdminsPolicy",
+        [int]$DomainAdminsPrecedence        = 10,
+        [int]$EnterpriseAdminsPrecedence    = 5
+    )
+
+    # Ensure the Active Directory module is available
+    Import-Module ActiveDirectory -ErrorAction Stop
+
+    # 1. Validate Domain Functional Level
+    try {
+        $domain = Get-ADDomain
+    }
+    catch {
+        Write-Warning "Unable to connect to Active Directory. Please ensure you have the correct permissions."
+        return
+    }
+
+    # FGPP requires at least Windows2008Domain (or higher).
+    if ($domain.DomainMode -notmatch "Windows2008|Windows2008R2|Windows2012|Windows2012R2|Windows2016|Windows2019|Windows2022") {
+        Write-Warning "Domain functional level [$($domain.DomainMode)] is insufficient for fine-grained password policies (min: Windows2008)."
+        return
+    }
+
+    # ==================================================
+    # DEFINE PARAMS FOR DOMAIN ADMINS POLICY
+    # ==================================================
+
+    # These params are used when creating a NEW policy:
+    $domainAdminsCreateParams = @{
+        Name                        = $DomainAdminsPolicyName
+        Precedence                  = $DomainAdminsPrecedence
+        ComplexityEnabled           = $true
+        LockoutDuration             = "00:30:00"
+        LockoutObservationWindow    = "00:30:00"
+        LockoutThreshold            = 3
+        MinPasswordAge              = "1.00:00:00"
+        PasswordHistoryCount        = 24
+        ReversibleEncryptionEnabled = $false
+        MaxPasswordAge              = "30.00:00:00"
+        MinPasswordLength           = 15
+    }
+
+    # These params are used when UPDATING an EXISTING policy:
+    $domainAdminsSetParams = @{
+        Identity                    = $DomainAdminsPolicyName
+        Precedence                  = $DomainAdminsPrecedence
+        ComplexityEnabled           = $true
+        LockoutDuration             = "00:30:00"
+        LockoutObservationWindow    = "00:30:00"
+        LockoutThreshold            = 3
+        MinPasswordAge              = "1.00:00:00"
+        PasswordHistoryCount        = 24
+        ReversibleEncryptionEnabled = $false
+        MaxPasswordAge              = "30.00:00:00"
+        MinPasswordLength           = 15
+    }
+
+    # ==================================================
+    # DEFINE PARAMS FOR ENTERPRISE ADMINS POLICY
+    # ==================================================
+
+    $enterpriseAdminsCreateParams = @{
+        Name                        = $EnterpriseAdminsPolicyName
+        Precedence                  = $EnterpriseAdminsPrecedence
+        ComplexityEnabled           = $true
+        LockoutDuration             = "00:30:00"
+        LockoutObservationWindow    = "00:30:00"
+        LockoutThreshold            = 3
+        MinPasswordAge              = "1.00:00:00"
+        PasswordHistoryCount        = 24
+        ReversibleEncryptionEnabled = $false
+        MaxPasswordAge              = "15.00:00:00"
+        MinPasswordLength           = 20
+    }
+
+    $enterpriseAdminsSetParams = @{
+        Identity                    = $EnterpriseAdminsPolicyName
+        Precedence                  = $EnterpriseAdminsPrecedence
+        ComplexityEnabled           = $true
+        LockoutDuration             = "00:30:00"
+        LockoutObservationWindow    = "00:30:00"
+        LockoutThreshold            = 3
+        MinPasswordAge              = "1.00:00:00"
+        PasswordHistoryCount        = 24
+        ReversibleEncryptionEnabled = $false
+        MaxPasswordAge              = "15.00:00:00"
+        MinPasswordLength           = 20
+    }
+
+    # ==================================================
+    # 2. CREATE or UPDATE the Domain Admins FGPP
+    # ==================================================
+    $domainAdminsFGPP = Get-ADFineGrainedPasswordPolicy -Filter { Name -eq $DomainAdminsPolicyName } -ErrorAction SilentlyContinue
+
+    if ($domainAdminsFGPP) {
+        # Policy already exists => Update it
+        Set-ADFineGrainedPasswordPolicy @domainAdminsSetParams
+        Write-Host "Updated existing FGPP: $DomainAdminsPolicyName"
+    } else {
+        # Create a new policy
+        New-ADFineGrainedPasswordPolicy @domainAdminsCreateParams
+        Write-Host "Created new FGPP: $DomainAdminsPolicyName"
+    }
+
+    # Apply to the Domain Admins group if not already applied
+    $domainAdminsSubjects = Get-ADFineGrainedPasswordPolicySubject -Identity $DomainAdminsPolicyName
+    if (-not ($domainAdminsSubjects -contains "Domain Admins")) {
+        Add-ADFineGrainedPasswordPolicySubject -Identity $DomainAdminsPolicyName -Subjects "Domain Admins"
+        Write-Host "Applied FGPP $DomainAdminsPolicyName to Domain Admins group"
+    }
+    else {
+        Write-Host "FGPP $DomainAdminsPolicyName is already applied to Domain Admins group"
+    }
+
+    # ==================================================
+    # 3. CREATE or UPDATE the Enterprise Admins FGPP
+    # ==================================================
+    $enterpriseAdminsFGPP = Get-ADFineGrainedPasswordPolicy -Filter { Name -eq $EnterpriseAdminsPolicyName } -ErrorAction SilentlyContinue
+
+    if ($enterpriseAdminsFGPP) {
+        # Policy already exists => Update it
+        Set-ADFineGrainedPasswordPolicy @enterpriseAdminsSetParams
+        Write-Host "Updated existing FGPP: $EnterpriseAdminsPolicyName"
+    } else {
+        # Create a new policy
+        New-ADFineGrainedPasswordPolicy @enterpriseAdminsCreateParams
+        Write-Host "Created new FGPP: $EnterpriseAdminsPolicyName"
+    }
+
+    # Apply to the Enterprise Admins group if not already applied
+    $enterpriseAdminsSubjects = Get-ADFineGrainedPasswordPolicySubject -Identity $EnterpriseAdminsPolicyName
+    if (-not ($enterpriseAdminsSubjects -contains "Enterprise Admins")) {
+        Add-ADFineGrainedPasswordPolicySubject -Identity $EnterpriseAdminsPolicyName -Subjects "Enterprise Admins"
+        Write-Host "Applied FGPP $EnterpriseAdminsPolicyName to Enterprise Admins group"
+    }
+    else {
+        Write-Host "FGPP $EnterpriseAdminsPolicyName is already applied to Enterprise Admins group"
+    }
+
+    # ==================================================
+    # 4. FINAL: DISPLAY FGPP SETTINGS
+    # ==================================================
+    Write-Host "`n===== Final FGPP Settings Check ====="
+    $policies = Get-ADFineGrainedPasswordPolicy -Filter {
+        Name -eq $DomainAdminsPolicyName -or Name -eq $EnterpriseAdminsPolicyName
+    }
+
+    if ($policies) {
+        $policies |
+            Select-Object Name,
+                          Precedence,
+                          MinPasswordLength,
+                          MaxPasswordAge,
+                          LockoutThreshold,
+                          LockoutDuration,
+                          LockoutObservationWindow,
+                          ComplexityEnabled,
+                          PasswordHistoryCount,
+                          ReversibleEncryptionEnabled |
+            Format-Table -AutoSize
+    }
+    else {
+        Write-Host "No FGPPs found for: $DomainAdminsPolicyName or $EnterpriseAdminsPolicyName"
+    }
+}
+
 function Show-MainMenu {
     Clear-Host
 
@@ -3831,14 +4000,15 @@ function Show-MainMenu {
     Write-Host " 31) Sweep Internet Explorer from all Windows Servers and Install Edge Enterprise x64"  -ForegroundColor Cyan
     Write-Host " 32) Remove SMB1 from Local Machine"                      -ForegroundColor Cyan
     Write-Host " 33) Reset DSRM Password All DC's"                        -ForegroundColor Cyan
+    Write-Host " 34) Create FGPP for Domain Admins and Enterprise Admins Groups" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host " 34) Exit" -ForegroundColor Magenta
+    Write-Host " 35) Exit" -ForegroundColor Magenta
     Write-Host ""
 }
 
 do {
     Show-MainMenu
-    $choice = Read-Host "Enter selection (1-29)"
+    $choice = Read-Host "Enter selection (1-35)"
 
     switch ($choice) {
 
@@ -3882,8 +4052,9 @@ do {
         31 { Deploy-EdgeAndRemoveIE }
         32 { Remove-SMB1Feature }
         33 { Set-DSRMPasswordForAllDCs }
+        34 { Set-AdminFGPP }
 
-        34 {
+        35 {
             Write-Host "Exiting..." -ForegroundColor Green
             break
         }
@@ -3893,6 +4064,6 @@ do {
             Pause
         }
     }
-} while ($choice -ne 34)
+} while ($choice -ne 35)
 
 Write-Host "Done, Thank you for using, we enjoy feedback and suggestions please drop us a line." -ForegroundColor Green
