@@ -3940,7 +3940,13 @@ function Set-AdminFGPP {
     else {
         Write-Host "No FGPPs found for: $DomainAdminsPolicyName or $EnterpriseAdminsPolicyName"
     }
+   {
+      Pause
+      Show-MainMenu
+      return
 }
+}
+
 
 function Show-MainMenu {
     Clear-Host
